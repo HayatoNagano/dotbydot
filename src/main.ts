@@ -18,6 +18,8 @@ let game: Game | null = null;
 // Initialize audio on first user interaction
 const initAudio = () => {
   audioManager.init();
+  audioManager.startMenuBGM();
+  audioManager.startCampfire();
   window.removeEventListener('keydown', initAudio);
   window.removeEventListener('click', initAudio);
 };
@@ -31,18 +33,26 @@ const loop = new GameLoop(
       if (game.phase !== GamePhase.Playing && input.wasPressed('KeyR')) {
         audioManager.stopHeartbeat();
         audioManager.stopAmbient();
+        audioManager.stopChase();
+        game.infoPanel.hide();
         game = new Game(canvas, input, game.selection);
         audioManager.startAmbient();
       }
       if (input.wasPressed('Escape') && game.phase !== GamePhase.Playing) {
         audioManager.stopHeartbeat();
         audioManager.stopAmbient();
+        audioManager.stopChase();
+        game.infoPanel.hide();
         game = null;
         menu.state = MenuState.Title;
+        audioManager.startMenuBGM();
+        audioManager.startCampfire();
       }
     } else {
       const selection = menu.update(input);
       if (selection) {
+        audioManager.stopMenuBGM();
+        audioManager.stopCampfire();
         game = new Game(canvas, input, selection);
         audioManager.startAmbient();
       }

@@ -1,5 +1,5 @@
 // Tile & Map
-export const TILE_SIZE = 16;
+export const TILE_SIZE = 48;
 export const MAP_COLS = 50;
 export const MAP_ROWS = 50;
 
@@ -7,17 +7,17 @@ export const MAP_ROWS = 50;
 export const CANVAS_WIDTH = 800;
 export const GAME_HEIGHT = 600;
 export const HUD_HEIGHT = 100;
-export const CANVAS_HEIGHT = GAME_HEIGHT + HUD_HEIGHT;
+export const CANVAS_HEIGHT = GAME_HEIGHT;
 
 // Fog of War
 export const FOG_RADIUS_SURVIVOR = 4;
 export const FOG_RADIUS_KILLER = 5;
 
-// Movement (px/s)
-export const SURVIVOR_RUN_SPEED = 100;
-export const SURVIVOR_WALK_SPEED = 45;
-export const KILLER_BASE_SPEED = 92;
-export const KILLER_WALK_SPEED = 42;
+// Movement (px/s) — scaled to match TILE_SIZE 48
+export const SURVIVOR_RUN_SPEED = 300;
+export const SURVIVOR_WALK_SPEED = 135;
+export const KILLER_BASE_SPEED = 276;
+export const KILLER_WALK_SPEED = 126;
 
 // Gameplay
 export const GENERATORS_ON_MAP = 5;

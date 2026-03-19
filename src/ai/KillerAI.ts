@@ -28,6 +28,10 @@ export class KillerAI implements AIController {
   private investigateTarget: { x: number; y: number } | null = null;
   private stateTimer = 0;
   private pathRecalcTimer = 0;
+  /** Reaction delay — AI pauses briefly before acting after spotting survivor */
+  private reactionTimer = 0;
+  /** Whether currently in a reaction delay */
+  private reacting = false;
 
   constructor(
     private killer: Killer,
@@ -44,6 +48,17 @@ export class KillerAI implements AIController {
   update(dt: number): { dx: number; dy: number; interact: boolean; ability: boolean; walk: boolean } {
     this.stateTimer += dt;
     this.pathRecalcTimer += dt;
+
+    // Handle reaction delay
+    if (this.reacting) {
+      this.reactionTimer -= dt;
+      if (this.reactionTimer <= 0) {
+        this.reacting = false;
+      } else {
+        // Stand still during reaction (looking around)
+        return { dx: 0, dy: 0, interact: false, ability: false, walk: false };
+      }
+    }
 
     // Check if we can see survivor (within fog)
     const killerTX = Math.floor(this.killer.centerX / TILE_SIZE);
@@ -65,13 +80,19 @@ export class KillerAI implements AIController {
         if (canSeeSurvivor) {
           this.state = KillerState.Chase;
           this.stateTimer = 0;
+          // Reaction delay — doesn't instantly rush
+          this.reacting = true;
+          this.reactionTimer = 0.4 + Math.random() * 0.6; // 0.4-1.0s delay
+          this.currentPath = null;
         } else {
-          // Check for scratch marks
-          const recentMark = this.findRecentScratchMark();
-          if (recentMark) {
-            this.investigateTarget = { x: recentMark.x, y: recentMark.y };
-            this.state = KillerState.Investigate;
-            this.stateTimer = 0;
+          // Check for scratch marks (less frequently)
+          if (this.stateTimer > 2) {
+            const recentMark = this.findRecentScratchMark();
+            if (recentMark) {
+              this.investigateTarget = { x: recentMark.x, y: recentMark.y };
+              this.state = KillerState.Investigate;
+              this.stateTimer = 0;
+            }
           }
         }
         break;
@@ -80,7 +101,10 @@ export class KillerAI implements AIController {
         if (canSeeSurvivor) {
           this.state = KillerState.Chase;
           this.stateTimer = 0;
-        } else if (this.stateTimer > 8) {
+          this.reacting = true;
+          this.reactionTimer = 0.3 + Math.random() * 0.4;
+          this.currentPath = null;
+        } else if (this.stateTimer > 10) {
           this.state = KillerState.Patrol;
           this.stateTimer = 0;
           this.patrolTarget = null;
@@ -88,7 +112,7 @@ export class KillerAI implements AIController {
         break;
 
       case KillerState.Chase:
-        if (!canSeeSurvivor && this.stateTimer > 5) {
+        if (!canSeeSurvivor && this.stateTimer > 6) {
           this.state = KillerState.Investigate;
           this.investigateTarget = { x: survTX, y: survTY };
           this.stateTimer = 0;
@@ -113,6 +137,8 @@ export class KillerAI implements AIController {
       case KillerState.Hook:
         this.state = KillerState.Patrol;
         this.stateTimer = 0;
+        this.reacting = true;
+        this.reactionTimer = 1.5; // Pause after hooking
         break;
     }
 
@@ -120,30 +146,35 @@ export class KillerAI implements AIController {
     switch (this.state) {
       case KillerState.Patrol:
         result = this.doPatrol(dt, killerTX, killerTY);
+        // Patrol at walking speed — not sprinting around the map
+        result.walk = true;
         break;
 
       case KillerState.Investigate:
         if (this.investigateTarget) {
           result = this.moveToTile(dt, killerTX, killerTY, this.investigateTarget.x, this.investigateTarget.y);
+          result.walk = true; // Walk while investigating
         }
         break;
 
       case KillerState.Chase:
         result = this.moveToTile(dt, killerTX, killerTY, survTX, survTY);
-        if (distToSurvivor < TILE_SIZE * 1.5) {
+        if (distToSurvivor < TILE_SIZE * 1.8) {
           result.interact = true; // Attack
         }
-        // Use ability when close-ish
-        if (distToSurvivor < TILE_SIZE * 8 && distToSurvivor > TILE_SIZE * 3) {
+        // Use ability less aggressively — only when medium range and with some randomness
+        if (distToSurvivor < TILE_SIZE * 7 && distToSurvivor > TILE_SIZE * 4 && Math.random() < 0.02) {
           result.ability = true;
         }
         break;
 
       case KillerState.Attack:
-        // Move to dying survivor to pick up
-        result = this.moveToTile(dt, killerTX, killerTY, survTX, survTY);
-        if (distToSurvivor < TILE_SIZE * 1.5) {
-          result.interact = true; // Pickup
+        // Move to dying survivor to pick up — slight delay before pickup
+        if (this.stateTimer > 0.5) {
+          result = this.moveToTile(dt, killerTX, killerTY, survTX, survTY);
+          if (distToSurvivor < TILE_SIZE * 1.5) {
+            result.interact = true; // Pickup
+          }
         }
         break;
 
@@ -173,8 +204,8 @@ export class KillerAI implements AIController {
   }
 
   private doPatrol(dt: number, tx: number, ty: number): { dx: number; dy: number; interact: boolean; ability: boolean; walk: boolean } {
-    // Patrol towards generators
-    if (!this.patrolTarget || this.stateTimer > 10) {
+    // Patrol towards generators — pick a new target less frequently
+    if (!this.patrolTarget || this.stateTimer > 15) {
       const unfinishedGens = this.generators.filter((g) => !g.completed);
       if (unfinishedGens.length > 0) {
         const gen = unfinishedGens[Math.floor(Math.random() * unfinishedGens.length)];
@@ -199,8 +230,8 @@ export class KillerAI implements AIController {
     toX: number,
     toY: number,
   ): { dx: number; dy: number; interact: boolean; ability: boolean; walk: boolean } {
-    // Recalculate path periodically
-    if (this.pathRecalcTimer > 0.5 || !this.currentPath) {
+    // Recalculate path less frequently (0.8s instead of 0.5s)
+    if (this.pathRecalcTimer > 0.8 || !this.currentPath) {
       this.currentPath = this.pathfinding.findPath(fromX, fromY, toX, toY);
       this.pathIndex = 0;
       this.pathRecalcTimer = 0;

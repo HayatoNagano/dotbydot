@@ -9,22 +9,16 @@ import { Generator } from '../entities/Generator';
 import { Hook } from '../entities/Hook';
 import { ExitGate } from '../entities/ExitGate';
 import { Camera } from '../core/Camera';
-import { TileType, HealthState } from '../types';
+import { TileType } from '../types';
 import { ScratchMarks } from '../systems/ScratchMarks';
 import { TerrorRadius } from '../systems/TerrorRadius';
 import { SkillCheck } from '../ui/SkillCheck';
-import { Ability } from '../abilities/Ability';
-import { Hook as HookEntity } from '../entities/Hook';
 import {
   TILE_SIZE,
   COLOR_FLOOR,
   COLOR_WALL,
   COLOR_FOG,
-  CANVAS_WIDTH,
-  CANVAS_HEIGHT,
   GAME_HEIGHT,
-  HUD_HEIGHT,
-  GENERATORS_TO_POWER,
 } from '../constants';
 
 export interface RenderView {
@@ -44,13 +38,6 @@ export interface WorldObjects {
   hooks: Hook[];
   exitGates: ExitGate[];
 }
-
-const HEALTH_JP: Record<string, string> = {
-  healthy: '健康',
-  injured: '負傷',
-  dying: '瀕死',
-  dead: '死亡',
-};
 
 export class Renderer {
   readonly ctx: CanvasRenderingContext2D;
@@ -98,16 +85,65 @@ export class Renderer {
     const endRow = Math.min(map.rows - 1, Math.ceil((camera.y + height) / TILE_SIZE));
 
     // Tiles
+    const T = TILE_SIZE;
     for (let row = startRow; row <= endRow; row++) {
       for (let col = startCol; col <= endCol; col++) {
         if (!fog.isVisible(col, row)) continue;
-        const sx = col * TILE_SIZE - camera.x;
-        const sy = row * TILE_SIZE - camera.y;
-        ctx.fillStyle = map.get(col, row) === TileType.Wall ? COLOR_WALL : COLOR_FLOOR;
-        ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
-        if (map.get(col, row) === TileType.Floor) {
+        const sx = col * T - camera.x;
+        const sy = row * T - camera.y;
+
+        if (map.get(col, row) === TileType.Wall) {
+          // Wall base
+          ctx.fillStyle = COLOR_WALL;
+          ctx.fillRect(sx, sy, T, T);
+          // Brick pattern
+          ctx.fillStyle = 'rgba(0,0,0,0.15)';
+          // Horizontal mortar lines
+          ctx.fillRect(sx, sy + Math.floor(T * 0.33), T, 1);
+          ctx.fillRect(sx, sy + Math.floor(T * 0.66), T, 1);
+          // Vertical mortar (offset per row for brick stagger)
+          const off = row % 2 === 0 ? 0 : Math.floor(T / 2);
+          ctx.fillRect(sx + off, sy, 1, Math.floor(T * 0.33));
+          ctx.fillRect(sx + Math.floor(T / 2) + off, sy, 1, Math.floor(T * 0.33));
+          if (off > 0) {
+            ctx.fillRect(sx, sy + Math.floor(T * 0.33), 1, Math.floor(T * 0.33));
+          }
+          ctx.fillRect(sx + Math.floor(T * 0.25) + (off > 0 ? 0 : Math.floor(T / 4)), sy + Math.floor(T * 0.33), 1, Math.floor(T * 0.33));
+          ctx.fillRect(sx + Math.floor(T * 0.75) - (off > 0 ? Math.floor(T / 4) : 0), sy + Math.floor(T * 0.33), 1, Math.floor(T * 0.33));
+          // Top highlight
+          ctx.fillStyle = 'rgba(255,255,255,0.05)';
+          ctx.fillRect(sx, sy, T, 1);
+          // Bottom shadow
+          ctx.fillStyle = 'rgba(0,0,0,0.2)';
+          ctx.fillRect(sx, sy + T - 1, T, 1);
+        } else {
+          // Floor base
+          ctx.fillStyle = COLOR_FLOOR;
+          ctx.fillRect(sx, sy, T, T);
+          // Subtle grid
           ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-          ctx.strokeRect(sx, sy, TILE_SIZE, TILE_SIZE);
+          ctx.strokeRect(sx, sy, T, T);
+          // Random-looking floor variation (deterministic from position)
+          const hash = ((col * 7 + row * 13) & 0xff) / 255;
+          if (hash > 0.85) {
+            ctx.fillStyle = 'rgba(255,255,255,0.02)';
+            ctx.fillRect(sx + 2, sy + 2, T - 4, T - 4);
+          } else if (hash < 0.1) {
+            ctx.fillStyle = 'rgba(0,0,0,0.08)';
+            const dotX = Math.floor((hash * 1000) % (T - 4)) + 2;
+            const dotY = Math.floor((hash * 3000) % (T - 4)) + 2;
+            ctx.fillRect(sx + dotX, sy + dotY, 2, 2);
+          }
+          // Occasional crack
+          if (hash > 0.7 && hash < 0.75) {
+            ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(sx + T * 0.2, sy + T * 0.3);
+            ctx.lineTo(sx + T * 0.5, sy + T * 0.6);
+            ctx.lineTo(sx + T * 0.7, sy + T * 0.5);
+            ctx.stroke();
+          }
         }
       }
     }
@@ -152,6 +188,8 @@ export class Renderer {
       if (char instanceof Survivor) {
         const inLocker = objects.lockers.some((l) => l.occupant === char);
         if (inLocker) continue;
+        const onHook = objects.hooks.some((h) => h.hooked === char);
+        if (onHook) continue;
       }
 
       const tileX = Math.floor(char.centerX / TILE_SIZE);
@@ -213,164 +251,6 @@ export class Renderer {
     ctx.translate(view.offsetX, view.offsetY);
     skillCheck.render(ctx, view.width / 2, view.height / 2);
     ctx.restore();
-  }
-
-  /** Render the info panel below the game area in Japanese */
-  renderInfoPanel(
-    survivor: Survivor,
-    killer: Killer,
-    generatorsCompleted: number,
-    gatesPowered: boolean,
-    isRepairing: boolean,
-    survivorAbility: Ability | null,
-    killerAbility: Ability | null,
-    isSingleView: boolean,
-    hookedHook: HookEntity | null,
-  ): void {
-    const ctx = this.ctx;
-    const panelY = GAME_HEIGHT;
-
-    // Panel background
-    ctx.fillStyle = '#0a0a14';
-    ctx.fillRect(0, panelY, CANVAS_WIDTH, HUD_HEIGHT);
-
-    // Top border line
-    ctx.fillStyle = '#333';
-    ctx.fillRect(0, panelY, CANVAS_WIDTH, 1);
-
-    const leftCol = 12;
-    const midCol = CANVAS_WIDTH / 2 - 80;
-    const rightCol = CANVAS_WIDTH - 280;
-
-    // ─── Survivor info (left) ───
-    const sColor = survivor.health === HealthState.Healthy ? '#00ff88'
-      : survivor.health === HealthState.Injured ? '#ffaa00'
-      : survivor.health === HealthState.Dying ? '#ff6600' : '#444';
-
-    ctx.fillStyle = sColor;
-    ctx.font = 'bold 13px monospace';
-    ctx.fillText('◆ サバイバー', leftCol, panelY + 18);
-
-    ctx.font = '12px monospace';
-    ctx.fillStyle = '#ccc';
-    const healthText = HEALTH_JP[survivor.health] ?? survivor.health;
-    ctx.fillText(`体力: ${healthText}`, leftCol, panelY + 36);
-
-    // Survivor status
-    ctx.fillStyle = '#999';
-    if (hookedHook) {
-      ctx.fillStyle = '#ff4444';
-      ctx.fillText(`フックに吊られている (段階 ${hookedHook.stage}/2)`, leftCol, panelY + 52);
-      // Self-unhook info
-      if (hookedHook.canSelfUnhook) {
-        ctx.fillStyle = '#00ccff';
-        ctx.font = '11px monospace';
-        ctx.fillText('Space連打で自力脱出！', leftCol, panelY + 66);
-        // Progress bar
-        const barX = leftCol + 150;
-        const barW = 80;
-        ctx.fillStyle = 'rgba(255,255,255,0.15)';
-        ctx.fillRect(barX, panelY + 57, barW, 10);
-        ctx.fillStyle = '#00ccff';
-        ctx.fillRect(barX, panelY + 57, barW * hookedHook.selfUnhookRatio, 10);
-        ctx.fillStyle = '#fff';
-        ctx.font = '9px monospace';
-        ctx.fillText(`${Math.floor(hookedHook.selfUnhookRatio * 100)}%`, barX + barW + 4, panelY + 66);
-      } else {
-        ctx.fillStyle = '#666';
-        ctx.font = '11px monospace';
-        ctx.fillText('自力脱出: 使用済み', leftCol, panelY + 66);
-      }
-    } else if (isRepairing) {
-      ctx.fillStyle = '#ffdd44';
-      ctx.fillText('修理中...', leftCol, panelY + 52);
-    } else if (survivor.isBeingCarried) {
-      ctx.fillStyle = '#ff4444';
-      ctx.fillText('搬送されている', leftCol, panelY + 52);
-    } else if (survivor.health === HealthState.Dying) {
-      ctx.fillText('這って移動', leftCol, panelY + 52);
-    } else if (survivor.walking) {
-      ctx.fillText('歩行中（静音）', leftCol, panelY + 52);
-    }
-
-    // Survivor ability
-    if (survivorAbility) {
-      const abY = panelY + 70;
-      ctx.fillStyle = survivorAbility.isReady ? '#00ff88' : survivorAbility.isActive ? '#ffff00' : '#555';
-      ctx.font = '11px monospace';
-      const abStatus = survivorAbility.isActive ? '発動中'
-        : survivorAbility.isReady ? '使用可 [Q]'
-        : `待機 ${survivorAbility.cooldownRemaining.toFixed(1)}秒`;
-      ctx.fillText(`能力: ${survivorAbility.name} — ${abStatus}`, leftCol, abY);
-    }
-
-    // ─── Center: game status ───
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 13px monospace';
-    ctx.fillText('▼ 目標', midCol, panelY + 18);
-
-    ctx.font = '12px monospace';
-    if (!gatesPowered) {
-      ctx.fillStyle = generatorsCompleted > 0 ? '#ffdd44' : '#999';
-      ctx.fillText(`発電機: ${generatorsCompleted} / ${GENERATORS_TO_POWER} 修理完了`, midCol, panelY + 36);
-      ctx.fillStyle = '#666';
-      ctx.fillText('発電機を修理してゲートを通電させよう', midCol, panelY + 52);
-    } else {
-      ctx.fillStyle = '#00ff88';
-      ctx.fillText('通電完了！ゲートを開けて脱出せよ', midCol, panelY + 36);
-    }
-
-    // ─── Killer info (right) ───
-    ctx.fillStyle = '#ff4444';
-    ctx.font = 'bold 13px monospace';
-    ctx.fillText('◆ キラー', rightCol, panelY + 18);
-
-    ctx.font = '12px monospace';
-    ctx.fillStyle = '#ccc';
-    if (killer.isStunned) {
-      ctx.fillStyle = '#ffff00';
-      ctx.fillText('状態: スタン中', rightCol, panelY + 36);
-    } else if (killer.isCarrying) {
-      ctx.fillStyle = '#ff8844';
-      ctx.fillText('状態: サバイバー搬送中', rightCol, panelY + 36);
-    } else if (killer.canAttack) {
-      ctx.fillStyle = '#ff4444';
-      ctx.fillText('攻撃: 可能', rightCol, panelY + 36);
-    } else {
-      ctx.fillStyle = '#888';
-      ctx.fillText(`攻撃: 待機 ${killer.attackCooldown.toFixed(1)}秒`, rightCol, panelY + 36);
-    }
-
-    // Killer ability
-    if (killerAbility) {
-      const abY = panelY + 52;
-      ctx.fillStyle = killerAbility.isReady ? '#ff4444' : killerAbility.isActive ? '#ffff00' : '#555';
-      ctx.font = '11px monospace';
-      const abStatus = killerAbility.isActive ? '発動中'
-        : killerAbility.isReady ? '使用可 [,]'
-        : `待機 ${killerAbility.cooldownRemaining.toFixed(1)}秒`;
-      ctx.fillText(`能力: ${killerAbility.name} — ${abStatus}`, rightCol, abY);
-    }
-
-    // ─── Controls (bottom of panel) ───
-    ctx.fillStyle = '#444';
-    ctx.font = '10px monospace';
-    const ctrlY = panelY + HUD_HEIGHT - 10;
-    if (isSingleView) {
-      ctx.fillText(
-        '操作 — 移動:WASD  アクション:E  スキルチェック:Space  歩行:Shift  能力:Q',
-        leftCol, ctrlY,
-      );
-    } else {
-      ctx.fillText(
-        'サバイバー — 移動:WASD  アクション:E  スキルチェック:Space  歩行:Shift  能力:Q',
-        leftCol, ctrlY,
-      );
-      ctx.fillText(
-        'キラー — 移動:矢印  攻撃/破壊:.  搬送降ろす:/  能力:,',
-        CANVAS_WIDTH / 2 + 10, ctrlY,
-      );
-    }
   }
 
   renderSplitDivider(): void {

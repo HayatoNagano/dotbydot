@@ -26,9 +26,10 @@ import { TrapAbility } from '../abilities/TrapAbility';
 import { ThrowAxe } from '../abilities/ThrowAxe';
 import { eventBus } from './EventBus';
 import { HealthState, GamePhase } from '../types';
-import { MenuSelection, GameMode } from '../ui/Menu';
+import { MenuSelection, GameMode, PlayerRole } from '../ui/Menu';
 import { audioManager } from '../audio/AudioManager';
 import { TerrorRadius } from '../systems/TerrorRadius';
+import { InfoPanel } from '../ui/InfoPanel';
 import {
   TILE_SIZE,
   FOG_RADIUS_SURVIVOR,
@@ -60,6 +61,7 @@ export class Game {
   readonly renderer: Renderer;
   readonly scratchMarks: ScratchMarks;
   readonly skillCheck: SkillCheck;
+  readonly infoPanel: InfoPanel;
   readonly selection: MenuSelection;
 
   survivorAbility: Ability | null = null;
@@ -78,15 +80,19 @@ export class Game {
   private prevSurvivorHealth: HealthState = HealthState.Healthy;
   private prevPhase: GamePhase = GamePhase.Playing;
   private prevGatesPowered = false;
+  private inChase = false;
+  private chaseCooldown = 0; // grace period before stopping chase music
   readonly viewportWidth: number;
   readonly viewportHeight: number;
   readonly isSingleView: boolean;
+  readonly playerRole: PlayerRole;
   private killerAI: KillerAI | null = null;
   private survivorAI: SurvivorAI | null = null;
 
   constructor(canvas: HTMLCanvasElement, input: Input, selection: MenuSelection) {
     this.selection = selection;
     this.isSingleView = selection.mode === GameMode.VsCPU;
+    this.playerRole = selection.playerRole;
 
     if (this.isSingleView) {
       this.viewportWidth = CANVAS_WIDTH;
@@ -101,6 +107,7 @@ export class Game {
     this.renderer = new Renderer(canvas, CANVAS_WIDTH, CANVAS_HEIGHT);
     this.scratchMarks = new ScratchMarks();
     this.skillCheck = new SkillCheck();
+    this.infoPanel = new InfoPanel();
 
     // Spawn positions
     const sSpawn = this.findWalkableSpawn(5, 5);
@@ -124,10 +131,18 @@ export class Game {
 
     // Setup AI for CPU mode
     if (selection.mode === GameMode.VsCPU) {
-      this.killerAI = new KillerAI(
-        this.killer, this.survivor, this.map, this.killerFog,
-        this.scratchMarks, this.hooks, this.generators,
-      );
+      if (this.playerRole === PlayerRole.Survivor) {
+        this.killerAI = new KillerAI(
+          this.killer, this.survivor, this.map, this.killerFog,
+          this.scratchMarks, this.hooks, this.generators,
+        );
+      } else {
+        this.survivorAI = new SurvivorAI(
+          this.survivor, this.killer, this.map, this.survivorFog,
+          this.generators, this.exitGates, this.lockers,
+          () => this.gatesPowered,
+        );
+      }
     }
 
     eventBus.on('generator_completed', () => {
@@ -217,15 +232,11 @@ export class Game {
     this.exitGates.push(new ExitGate(g1x, gate1Y));
     this.exitGates.push(new ExitGate(g2x, gate2Y));
 
+    // Place pallets at doorways/corridors
+    this.placePalletsAtDoorways(rng);
+
     for (; roomIdx < rooms.length; roomIdx++) {
       const room = rooms[roomIdx];
-      if (rng() > 0.5) {
-        const px = room.x + 2 + Math.floor(rng() * 4);
-        const py = room.y + 2 + Math.floor(rng() * 4);
-        if (this.map.isWalkable(px, py)) {
-          this.pallets.push(new Pallet(px, py));
-        }
-      }
       if (rng() > 0.65) {
         const lx = room.x + 1 + Math.floor(rng() * 5);
         const ly = room.y + 1 + Math.floor(rng() * 5);
@@ -234,6 +245,76 @@ export class Game {
         }
       }
     }
+  }
+
+  /** Find doorway tiles and place pallets at a subset of them */
+  private placePalletsAtDoorways(rng: () => number): void {
+    const doorways: { x: number; y: number; orientation: 'h' | 'v' }[] = [];
+    const added = new Set<string>();
+
+    for (let y = 2; y < this.map.rows - 2; y++) {
+      for (let x = 2; x < this.map.cols - 2; x++) {
+        if (!this.map.isWalkable(x, y)) continue;
+
+        // Door in a VERTICAL wall (wall runs top-to-bottom, passage goes left-right):
+        // Rooms on left and right are floor, wall is above or below (part of the wall column)
+        const openLR = this.map.isWalkable(x - 1, y) && this.map.isWalkable(x + 1, y);
+        const wallAboveOrBelow = !this.map.isWalkable(x, y - 1) || !this.map.isWalkable(x, y + 1);
+        if (openLR && wallAboveOrBelow) {
+          // Confirm it's a real doorway: at least one side above/below is wall
+          const key = `h:${x}:${y}`;
+          if (!added.has(key)) {
+            doorways.push({ x, y, orientation: 'h' });
+            added.add(key);
+            // Skip the adjacent door tile
+            added.add(`h:${x}:${y + 1}`);
+            added.add(`h:${x}:${y - 1}`);
+          }
+          continue;
+        }
+
+        // Door in a HORIZONTAL wall (wall runs left-to-right, passage goes up-down):
+        // Rooms above and below are floor, wall is left or right
+        const openUD = this.map.isWalkable(x, y - 1) && this.map.isWalkable(x, y + 1);
+        const wallLeftOrRight = !this.map.isWalkable(x - 1, y) || !this.map.isWalkable(x + 1, y);
+        if (openUD && wallLeftOrRight) {
+          const key = `v:${x}:${y}`;
+          if (!added.has(key)) {
+            doorways.push({ x, y, orientation: 'v' });
+            added.add(key);
+            added.add(`v:${x + 1}:${y}`);
+            added.add(`v:${x - 1}:${y}`);
+          }
+        }
+      }
+    }
+
+    // Shuffle doorways and pick a subset
+    for (let i = doorways.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [doorways[i], doorways[j]] = [doorways[j], doorways[i]];
+    }
+
+    // Place pallets at ~40% of doorways, max 15
+    const count = Math.min(15, Math.floor(doorways.length * 0.4));
+    for (let i = 0; i < count; i++) {
+      const d = doorways[i];
+      this.pallets.push(new Pallet(d.x, d.y, d.orientation));
+    }
+  }
+
+  /** Check if a rectangle collides with any dropped pallet */
+  private palletCollision(px: number, py: number, w: number, h: number): boolean {
+    for (const pallet of this.pallets) {
+      if (!pallet.dropped || pallet.isDestroyed) continue;
+      if (px < pallet.pos.x + pallet.width &&
+          px + w > pallet.pos.x &&
+          py < pallet.pos.y + pallet.height &&
+          py + h > pallet.pos.y) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private seededRandom(seed: number): () => number {
@@ -245,11 +326,16 @@ export class Game {
   }
 
   private findWalkableSpawn(startX: number, startY: number): { x: number; y: number } {
-    for (let r = 0; r < 20; r++) {
+    for (let r = 0; r < 25; r++) {
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
-          if (this.map.isWalkable(startX + dx, startY + dy)) {
-            return { x: startX + dx, y: startY + dy };
+          const tx = startX + dx;
+          const ty = startY + dy;
+          // Ensure the tile and at least one neighbor are walkable (enough room)
+          if (this.map.isWalkable(tx, ty) &&
+              (this.map.isWalkable(tx + 1, ty) || this.map.isWalkable(tx - 1, ty)) &&
+              (this.map.isWalkable(tx, ty + 1) || this.map.isWalkable(tx, ty - 1))) {
+            return { x: tx, y: ty };
           }
         }
       }
@@ -260,15 +346,27 @@ export class Game {
   update(dt: number): void {
     if (this.phase !== GamePhase.Playing) return;
 
-    // --- Survivor input (WASD) ---
+    // --- Survivor input (WASD / AI) ---
     let sdx = 0, sdy = 0;
-    if (this.input.isDown('KeyW')) sdy -= 1;
-    if (this.input.isDown('KeyS')) sdy += 1;
-    if (this.input.isDown('KeyA')) sdx -= 1;
-    if (this.input.isDown('KeyD')) sdx += 1;
-    this.survivor.walking = this.input.isDown('ShiftLeft');
+    let survivorInteract = false;
+    let survivorAbilityInput = false;
 
-    // --- Killer input (Arrow keys / AI) ---
+    if (this.survivorAI) {
+      const aiResult = this.survivorAI.update(dt);
+      sdx = aiResult.dx;
+      sdy = aiResult.dy;
+      survivorInteract = aiResult.interact;
+      survivorAbilityInput = aiResult.ability;
+      this.survivor.walking = aiResult.walk;
+    } else {
+      if (this.input.isDown('KeyW')) sdy -= 1;
+      if (this.input.isDown('KeyS')) sdy += 1;
+      if (this.input.isDown('KeyA')) sdx -= 1;
+      if (this.input.isDown('KeyD')) sdx += 1;
+      this.survivor.walking = this.input.isDown('ShiftLeft');
+    }
+
+    // --- Killer input (Arrow keys or WASD when playing as killer / AI) ---
     let kdx = 0, kdy = 0;
     let killerInteract = false;
     let killerAbilityInput = false;
@@ -280,6 +378,13 @@ export class Game {
       killerInteract = aiResult.interact;
       killerAbilityInput = aiResult.ability;
       this.killer.walking = aiResult.walk;
+    } else if (this.playerRole === PlayerRole.Killer && this.isSingleView) {
+      // Player controls killer with WASD in CPU mode
+      if (this.input.isDown('KeyW')) kdy -= 1;
+      if (this.input.isDown('KeyS')) kdy += 1;
+      if (this.input.isDown('KeyA')) kdx -= 1;
+      if (this.input.isDown('KeyD')) kdx += 1;
+      this.killer.walking = this.input.isDown('ShiftLeft');
     } else {
       if (this.input.isDown('ArrowUp')) kdy -= 1;
       if (this.input.isDown('ArrowDown')) kdy += 1;
@@ -288,18 +393,22 @@ export class Game {
       this.killer.walking = this.input.isDown('ShiftRight');
     }
 
+    const playingAsKiller = this.playerRole === PlayerRole.Killer && this.isSingleView;
     const survivorLocker = this.lockers.find((l) => l.occupant === this.survivor);
     const isHooked = this.hooks.some((h) => h.hooked === this.survivor);
 
-    // Survivor ability (Q)
-    if (this.input.wasPressed('KeyQ') && this.survivorAbility) {
-      if (this.survivorAbility.activate()) {
+    // Survivor ability
+    if (survivorAbilityInput || (!playingAsKiller && this.input.wasPressed('KeyQ'))) {
+      if (this.survivorAbility?.activate()) {
         audioManager.playAbilityActivate();
       }
     }
 
-    // Killer ability
-    if ((this.input.wasPressed('Comma') || killerAbilityInput) && this.killerAbility) {
+    // Killer ability (Q when playing as killer, Comma in 2P)
+    const killerAbilityPressed = playingAsKiller
+      ? this.input.wasPressed('KeyQ')
+      : this.input.wasPressed('Comma');
+    if ((killerAbilityPressed || killerAbilityInput) && this.killerAbility) {
       if (this.killerAbility.activate()) {
         if (this.throwAxe && this.killerAbility === this.throwAxe) {
           audioManager.playAxeThrow();
@@ -309,8 +418,8 @@ export class Game {
       }
     }
 
-    // Skill check input (Space) / Self-unhook (Space while hooked)
-    if (this.input.wasPressed('Space')) {
+    // Skill check input (Space) / Self-unhook (Space while hooked) — only when playing as survivor
+    if (!playingAsKiller && this.input.wasPressed('Space')) {
       if (this.skillCheck.active) {
         const scResult = this.skillCheck.hit();
         switch (scResult) {
@@ -319,21 +428,22 @@ export class Game {
           case 'miss': audioManager.playSkillCheckMiss(); break;
         }
       } else if (isHooked) {
-        // Self-unhook attempt
         const hook = this.hooks.find((h) => h.hooked === this.survivor);
         if (hook && hook.canSelfUnhook) {
           if (hook.attemptSelfUnhook()) {
-            audioManager.playLocker(); // reuse creak sound for unhook
+            audioManager.playLocker();
           }
         }
       }
     }
 
-    // Survivor interact (E)
+    // Survivor interact (E when playing as survivor, or AI-driven)
     this.isRepairing = false;
-    if (this.input.isDown('KeyE') && !this.survivor.isIncapacitated && !isHooked) {
+    const survivorInteractHeld = playingAsKiller ? survivorInteract : this.input.isDown('KeyE');
+    const survivorInteractPressed = playingAsKiller ? survivorInteract : this.input.wasPressed('KeyE');
+    if (survivorInteractHeld && !this.survivor.isIncapacitated && !isHooked) {
       if (survivorLocker) {
-        if (this.input.wasPressed('KeyE')) {
+        if (survivorInteractPressed) {
           survivorLocker.exit();
           audioManager.playLocker();
         }
@@ -363,7 +473,7 @@ export class Game {
           }
         }
 
-        if (this.input.wasPressed('KeyE') && !repairedGen) {
+        if (survivorInteractPressed && !repairedGen) {
           for (const locker of this.lockers) {
             if (!locker.isOccupied && CollisionSystem.distance(this.survivor, locker) < TILE_SIZE * 1.5) {
               locker.enter(this.survivor);
@@ -373,12 +483,14 @@ export class Game {
           }
         }
 
-        if (this.input.wasPressed('KeyE')) {
+        if (survivorInteractPressed) {
           for (const pallet of this.pallets) {
             if (!pallet.dropped && !pallet.isDestroyed && CollisionSystem.distance(this.survivor, pallet) < TILE_SIZE * 1.5) {
+              // Check stun BEFORE drop (position shifts on drop)
+              const killerNear = CollisionSystem.distance(this.killer, pallet) < TILE_SIZE * 1.5;
               pallet.drop();
               audioManager.playPalletDrop();
-              if (CollisionSystem.distance(this.killer, pallet) < TILE_SIZE * 1.2) {
+              if (killerNear) {
                 this.killer.applyStun();
                 audioManager.playStun();
               }
@@ -393,8 +505,11 @@ export class Game {
       for (const gen of this.generators) gen.idle();
     }
 
-    // Killer interact (Period / AI)
-    if (this.input.wasPressed('Period') || killerInteract) {
+    // Killer interact (E when playing as killer, Period in 2P, or AI)
+    const killerInteractPressed = playingAsKiller
+      ? this.input.wasPressed('KeyE')
+      : this.input.wasPressed('Period');
+    if (killerInteractPressed || killerInteract) {
       if (this.killer.isCarrying) {
         let hooked = false;
         for (const hook of this.hooks) {
@@ -458,7 +573,9 @@ export class Game {
     }
 
     if (!this.killer.isStunned) {
-      this.killer.move(kdx, kdy, dt, this.map);
+      const palletBlocker = (px: number, py: number, w: number, h: number) =>
+        this.palletCollision(px, py, w, h);
+      this.killer.move(kdx, kdy, dt, this.map, palletBlocker);
     }
 
     // Carried survivor
@@ -513,17 +630,6 @@ export class Game {
       !this.survivor.walking && (sdx !== 0 || sdy !== 0) && !this.survivor.isIncapacitated,
     );
 
-    // Pallet collision
-    for (const pallet of this.pallets) {
-      if (pallet.dropped && !pallet.isDestroyed && CollisionSystem.overlaps(this.killer, pallet)) {
-        const ddx = this.killer.centerX - pallet.centerX;
-        const ddy = this.killer.centerY - pallet.centerY;
-        const len = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
-        this.killer.pos.x += (ddx / len) * 2;
-        this.killer.pos.y += (ddy / len) * 2;
-      }
-    }
-
     // Fog & Camera
     this.survivorFog.update(this.survivor.centerX, this.survivor.centerY);
     this.killerFog.update(this.killer.centerX, this.killer.centerY);
@@ -548,6 +654,30 @@ export class Game {
     );
     audioManager.updateHeartbeat(terrorIntensity);
 
+    // Chase detection — killer within chase range AND can see survivor
+    const chaseRange = TILE_SIZE * 8;
+    const dx2 = this.killer.centerX - this.survivor.centerX;
+    const dy2 = this.killer.centerY - this.survivor.centerY;
+    const distKS = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+    const survTX = Math.floor(this.survivor.centerX / TILE_SIZE);
+    const survTY = Math.floor(this.survivor.centerY / TILE_SIZE);
+    const killerCanSee = this.killerFog.isVisible(survTX, survTY);
+    const chaseActive = distKS < chaseRange && killerCanSee && !this.survivor.isIncapacitated;
+
+    if (chaseActive) {
+      this.chaseCooldown = 3; // 3-second grace period after losing sight
+      if (!this.inChase) {
+        this.inChase = true;
+        audioManager.startChase();
+      }
+    } else if (this.inChase) {
+      this.chaseCooldown -= dt;
+      if (this.chaseCooldown <= 0) {
+        this.inChase = false;
+        audioManager.stopChase();
+      }
+    }
+
     // Gate powered sound (one-shot)
     if (this.gatesPowered && !this.prevGatesPowered) {
       audioManager.playGatePowered();
@@ -569,6 +699,8 @@ export class Game {
     // Win/lose sound (one-shot)
     if (this.phase !== this.prevPhase) {
       audioManager.stopHeartbeat();
+      audioManager.stopChase();
+      this.inChase = false;
       if (this.phase === GamePhase.SurvivorWin) {
         audioManager.playEscape();
       } else if (this.phase === GamePhase.KillerWin) {
@@ -593,16 +725,19 @@ export class Game {
     };
 
     if (this.isSingleView) {
+      const isKillerPlayer = this.playerRole === PlayerRole.Killer;
       const view: RenderView = {
-        camera: this.survivorCamera,
-        fog: this.survivorFog,
-        character: this.survivor,
+        camera: isKillerPlayer ? this.killerCamera : this.survivorCamera,
+        fog: isKillerPlayer ? this.killerFog : this.survivorFog,
+        character: isKillerPlayer ? this.killer : this.survivor,
         offsetX: 0, offsetY: 0,
         width: this.viewportWidth, height: this.viewportHeight,
       };
       this.renderer.renderView(view, this.map, characters, objects, this.scratchMarks, this.killer, this.survivor, alpha);
       this.renderAbilityProjectiles(view);
-      this.renderer.renderSkillCheck(view, this.skillCheck, this.killer);
+      if (!isKillerPlayer) {
+        this.renderer.renderSkillCheck(view, this.skillCheck, this.killer);
+      }
     } else {
       const survivorView: RenderView = {
         camera: this.survivorCamera, fog: this.survivorFog, character: this.survivor,
@@ -623,14 +758,15 @@ export class Game {
       this.renderer.renderSplitDivider();
     }
 
-    // Info panel (outside game area)
+    // Info panel (DOM-based, fixed at browser bottom)
     const hookedHook = this.hooks.find((h) => h.hooked === this.survivor) ?? null;
-    this.renderer.renderInfoPanel(
+    this.infoPanel.update(
       this.survivor, this.killer,
       this.generatorsCompleted, this.gatesPowered, this.isRepairing,
       this.survivorAbility, this.killerAbility,
       this.isSingleView,
       hookedHook,
+      this.playerRole,
     );
 
     if (this.phase !== GamePhase.Playing) {

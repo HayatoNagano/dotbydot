@@ -27,8 +27,8 @@ export class ScratchMarks {
       if (this.spawnTimer >= ScratchMarks.SPAWN_INTERVAL) {
         this.spawnTimer = 0;
         this.marks.push({
-          x: playerX + (Math.random() - 0.5) * 4,
-          y: playerY + (Math.random() - 0.5) * 4,
+          x: playerX + (Math.random() - 0.5) * TILE_SIZE * 0.5,
+          y: playerY + (Math.random() - 0.5) * TILE_SIZE * 0.5,
           age: 0,
         });
       }
@@ -36,10 +36,16 @@ export class ScratchMarks {
   }
 
   render(ctx: CanvasRenderingContext2D, cameraX: number, cameraY: number): void {
+    const s = Math.floor(TILE_SIZE / 5);
     for (const mark of this.marks) {
       const alpha = 1 - mark.age / ScratchMarks.MAX_AGE;
       ctx.fillStyle = `rgba(200, 50, 50, ${alpha * 0.6})`;
-      ctx.fillRect(mark.x - cameraX - 1, mark.y - cameraY - 1, 3, 3);
+      const sx = mark.x - cameraX - Math.floor(s / 2);
+      const sy = mark.y - cameraY - Math.floor(s / 2);
+      // Claw scratch pattern
+      ctx.fillRect(sx, sy, s, 1);
+      ctx.fillRect(sx + 1, sy + 1, s - 1, 1);
+      ctx.fillRect(sx, sy + 2, s, 1);
     }
   }
 

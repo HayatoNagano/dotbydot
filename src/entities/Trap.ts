@@ -52,19 +52,44 @@ export class Trap extends Entity {
 
   render(ctx: CanvasRenderingContext2D, screenX: number, screenY: number): void {
     if (!this.armed && !this.trapped) return;
+    const W = this.width;
+    const p = Math.max(1, Math.floor(W / 10));
 
     if (this.trapped) {
-      // Triggered trap
-      ctx.fillStyle = '#ff4400';
-      ctx.fillRect(screenX, screenY, this.width, this.height);
+      // Triggered trap — closed jaws
+      ctx.fillStyle = '#883300';
+      ctx.fillRect(screenX + p, screenY + p, W - 2 * p, W - 2 * p);
+      // Jaw teeth
+      ctx.fillStyle = '#cc5500';
+      ctx.fillRect(screenX, screenY + Math.floor(W / 2) - p, W, 2 * p);
+      // Teeth spikes
+      ctx.fillStyle = '#aaa';
+      for (let i = 0; i < 4; i++) {
+        const tx = screenX + Math.floor(W * (i + 0.5) / 4);
+        ctx.fillRect(tx, screenY + Math.floor(W / 2) - 2 * p, p, p);
+        ctx.fillRect(tx, screenY + Math.floor(W / 2) + p, p, p);
+      }
       // Timer bar
       const ratio = this.trapTimer / Trap.TRAP_DURATION;
+      const barH = 2 * p;
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      ctx.fillRect(screenX, screenY - barH - p, W, barH);
       ctx.fillStyle = '#ffaa00';
-      ctx.fillRect(screenX, screenY - 4, this.width * ratio, 3);
+      ctx.fillRect(screenX, screenY - barH - p, W * ratio, barH);
     } else {
-      // Armed trap (subtle)
-      ctx.fillStyle = 'rgba(100, 60, 20, 0.6)';
-      ctx.fillRect(screenX + 2, screenY + 2, this.width - 4, this.height - 4);
+      // Armed trap — open jaws, subtle
+      ctx.fillStyle = 'rgba(80, 50, 20, 0.5)';
+      ctx.fillRect(screenX + p, screenY + p, W - 2 * p, W - 2 * p);
+      // Open jaw outline
+      ctx.strokeStyle = 'rgba(150, 100, 40, 0.6)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(screenX + p, screenY + p, W - 2 * p, W - 2 * p);
+      // Teeth hints
+      ctx.fillStyle = 'rgba(180, 180, 180, 0.4)';
+      ctx.fillRect(screenX + 2 * p, screenY + p, p, p);
+      ctx.fillRect(screenX + W - 3 * p, screenY + p, p, p);
+      ctx.fillRect(screenX + 2 * p, screenY + W - 2 * p, p, p);
+      ctx.fillRect(screenX + W - 3 * p, screenY + W - 2 * p, p, p);
     }
   }
 }

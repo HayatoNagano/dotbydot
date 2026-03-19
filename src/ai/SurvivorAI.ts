@@ -53,7 +53,7 @@ export class SurvivorAI implements AIController {
       (this.survivor.centerY - this.killer.centerY) ** 2,
     );
     const canSeeKiller = this.survivorFog.isVisible(killerTX, killerTY);
-    const killerClose = distToKiller < TERROR_RADIUS * TILE_SIZE * 0.6;
+    const killerClose = distToKiller < TERROR_RADIUS * TILE_SIZE * 0.5; // Less sensitive
 
     let result = { dx: 0, dy: 0, interact: false, ability: false, walk: false };
 
@@ -73,13 +73,13 @@ export class SurvivorAI implements AIController {
         break;
 
       case SurvivorState.Flee:
-        if (!canSeeKiller && this.stateTimer > 6) {
+        if (!canSeeKiller && this.stateTimer > 4) {
           this.state = SurvivorState.Repair;
           this.stateTimer = 0;
           this.currentPath = null;
         }
-        // Use ability when fleeing
-        if (killerClose && distToKiller < TILE_SIZE * 4) {
+        // Use ability when fleeing — less often
+        if (killerClose && distToKiller < TILE_SIZE * 3 && Math.random() < 0.03) {
           result.ability = true;
         }
         break;

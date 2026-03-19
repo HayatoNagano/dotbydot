@@ -6,7 +6,7 @@ import { TileMap } from '../world/TileMap';
 export class DeadHard extends Ability {
   private character: Character;
   invincible = false;
-  private dashSpeed = 200;
+  private dashSpeed = 600;
 
   constructor(character: Character) {
     super('Dead Hard', 60, 0.5);

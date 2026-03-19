@@ -34,33 +34,81 @@ export class ExitGate extends Entity {
   }
 
   render(ctx: CanvasRenderingContext2D, screenX: number, screenY: number): void {
-    if (this.isOpen) {
-      ctx.fillStyle = '#00ffaa';
-      ctx.fillRect(screenX, screenY, this.width, this.height);
-      ctx.fillStyle = '#000';
-      ctx.font = '9px monospace';
-      ctx.fillText('EXIT', screenX + 4, screenY + 11);
-    } else if (this.powered) {
-      ctx.fillStyle = '#888800';
-      ctx.fillRect(screenX, screenY, this.width, this.height);
-      ctx.fillStyle = '#fff';
-      ctx.font = '8px monospace';
-      ctx.fillText('GATE', screenX + 4, screenY + 11);
+    const T = TILE_SIZE;
+    const W = this.width; // 2 tiles
+    const p = Math.floor(T / 16);
 
-      // Open progress bar
+    if (this.isOpen) {
+      // Open gate — bright, welcoming
+      ctx.fillStyle = '#115533';
+      ctx.fillRect(screenX, screenY, W, T);
+      // Gate frame posts
+      ctx.fillStyle = '#00ffaa';
+      ctx.fillRect(screenX, screenY, 3 * p, T);
+      ctx.fillRect(screenX + W - 3 * p, screenY, 3 * p, T);
+      // Open space glow
+      ctx.fillStyle = 'rgba(0,255,150,0.2)';
+      ctx.fillRect(screenX + 3 * p, screenY, W - 6 * p, T);
+      // EXIT text
+      ctx.fillStyle = '#fff';
+      ctx.font = `${8 * p}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText('EXIT', screenX + W / 2, screenY + T / 2 + 3 * p);
+      ctx.textAlign = 'left';
+      // Top light
+      ctx.fillStyle = '#00ff88';
+      ctx.fillRect(screenX + W / 2 - 3 * p, screenY, 6 * p, 2 * p);
+    } else if (this.powered) {
+      // Powered, waiting to be opened
+      ctx.fillStyle = '#555522';
+      ctx.fillRect(screenX, screenY, W, T);
+      // Frame posts
+      ctx.fillStyle = '#888844';
+      ctx.fillRect(screenX, screenY, 3 * p, T);
+      ctx.fillRect(screenX + W - 3 * p, screenY, 3 * p, T);
+      // Gate bars
+      ctx.fillStyle = '#777733';
+      for (let i = 1; i < 5; i++) {
+        ctx.fillRect(screenX + Math.floor(W * i / 5), screenY + 2 * p, 2 * p, T - 4 * p);
+      }
+      // Blinking yellow light
+      const blink = Math.sin(Date.now() / 300) > 0;
+      ctx.fillStyle = blink ? '#ffff00' : '#887700';
+      ctx.fillRect(screenX + W / 2 - 2 * p, screenY, 4 * p, 2 * p);
+      // GATE text
+      ctx.fillStyle = '#fff';
+      ctx.font = `${7 * p}px monospace`;
+      ctx.textAlign = 'center';
+      ctx.fillText('GATE', screenX + W / 2, screenY + T / 2 + 2 * p);
+      ctx.textAlign = 'left';
+
+      // Progress bar
       if (this.openProgress > 0) {
-        ctx.fillStyle = 'rgba(0,0,0,0.5)';
-        ctx.fillRect(screenX, screenY - 5, this.width, 4);
+        const barH = 3 * p;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(screenX, screenY - barH - 2 * p, W, barH);
         ctx.fillStyle = '#00ff88';
-        ctx.fillRect(screenX, screenY - 5, this.width * this.openProgress, 4);
+        ctx.fillRect(screenX, screenY - barH - 2 * p, W * this.openProgress, barH);
+        ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(screenX, screenY - barH - 2 * p, W, barH);
       }
     } else {
-      // Unpowered
-      ctx.fillStyle = '#333333';
-      ctx.fillRect(screenX, screenY, this.width, this.height);
-      ctx.fillStyle = '#666';
-      ctx.font = '8px monospace';
-      ctx.fillText('GATE', screenX + 4, screenY + 11);
+      // Unpowered — dark, locked
+      ctx.fillStyle = '#222222';
+      ctx.fillRect(screenX, screenY, W, T);
+      // Frame posts
+      ctx.fillStyle = '#444444';
+      ctx.fillRect(screenX, screenY, 3 * p, T);
+      ctx.fillRect(screenX + W - 3 * p, screenY, 3 * p, T);
+      // Gate bars
+      ctx.fillStyle = '#333';
+      for (let i = 1; i < 5; i++) {
+        ctx.fillRect(screenX + Math.floor(W * i / 5), screenY + 2 * p, 2 * p, T - 4 * p);
+      }
+      // Dead light
+      ctx.fillStyle = '#333';
+      ctx.fillRect(screenX + W / 2 - 2 * p, screenY, 4 * p, 2 * p);
     }
   }
 }

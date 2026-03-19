@@ -3,12 +3,19 @@ import { TileMap } from '../world/TileMap';
 import { TILE_SIZE } from '../constants';
 import { Direction } from '../types';
 
+/** Optional extra collision check (e.g. dropped pallets blocking killer) */
+export type ExtraCollisionCheck = (px: number, py: number, w: number, h: number) => boolean;
+
 export class Character extends Entity {
   speed: number;
   walking = false;
   direction: Direction = Direction.Down;
   private prevX = 0;
   private prevY = 0;
+  /** Accumulated time for walk animation (seconds) */
+  animTime = 0;
+  /** Whether the character moved this frame */
+  isMoving = false;
 
   constructor(
     x: number,
@@ -16,14 +23,24 @@ export class Character extends Entity {
     speed: number,
     public color: string,
   ) {
-    super(x, y, TILE_SIZE * 0.75, TILE_SIZE * 0.75);
+    super(x, y, TILE_SIZE * 0.9, TILE_SIZE * 0.9);
     this.speed = speed;
     this.prevX = x;
     this.prevY = y;
   }
 
-  move(dx: number, dy: number, dt: number, map: TileMap): void {
-    if (dx === 0 && dy === 0) return;
+  move(dx: number, dy: number, dt: number, map: TileMap, extraCollision?: ExtraCollisionCheck): void {
+    this.isMoving = dx !== 0 || dy !== 0;
+    if (this.isMoving) {
+      const rate = this.walking ? 3 : 6;
+      this.animTime += dt * rate;
+    }
+    if (dx === 0 && dy === 0) {
+      // Sync prev position when idle to prevent interpolation jitter
+      this.prevX = this.pos.x;
+      this.prevY = this.pos.y;
+      return;
+    }
 
     // Normalize diagonal movement
     const len = Math.sqrt(dx * dx + dy * dy);
@@ -46,13 +63,15 @@ export class Character extends Entity {
 
     // Try X movement
     const nextX = this.pos.x + moveX;
-    if (!map.collidesRect(nextX, this.pos.y, this.width, this.height)) {
+    if (!map.collidesRect(nextX, this.pos.y, this.width, this.height) &&
+        (!extraCollision || !extraCollision(nextX, this.pos.y, this.width, this.height))) {
       this.pos.x = nextX;
     }
 
     // Try Y movement
     const nextY = this.pos.y + moveY;
-    if (!map.collidesRect(this.pos.x, nextY, this.width, this.height)) {
+    if (!map.collidesRect(this.pos.x, nextY, this.width, this.height) &&
+        (!extraCollision || !extraCollision(this.pos.x, nextY, this.width, this.height))) {
       this.pos.y = nextY;
     }
   }
