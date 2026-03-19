@@ -24,6 +24,20 @@ export class Input {
     return this.justPressed.has(code);
   }
 
+  /** Inject a key state from network (for online multiplayer) */
+  injectKey(code: string, down: boolean): void {
+    if (down) {
+      this.keys.add(code);
+    } else {
+      this.keys.delete(code);
+    }
+  }
+
+  /** Inject a "just pressed" event from network */
+  injectPressed(code: string): void {
+    this.justPressed.add(code);
+  }
+
   endFrame(): void {
     this.justPressed.clear();
   }

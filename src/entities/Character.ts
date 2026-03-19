@@ -10,8 +10,8 @@ export class Character extends Entity {
   speed: number;
   walking = false;
   direction: Direction = Direction.Down;
-  private prevX = 0;
-  private prevY = 0;
+  prevX = 0;
+  prevY = 0;
   /** Accumulated time for walk animation (seconds) */
   animTime = 0;
   /** Whether the character moved this frame */

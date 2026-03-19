@@ -80,28 +80,20 @@ export class Game {
   private prevSurvivorHealth: HealthState = HealthState.Healthy;
   private prevPhase: GamePhase = GamePhase.Playing;
   private prevGatesPowered = false;
-  private inChase = false;
+  inChase = false;
   private chaseCooldown = 0; // grace period before stopping chase music
   readonly viewportWidth: number;
   readonly viewportHeight: number;
-  readonly isSingleView: boolean;
   readonly playerRole: PlayerRole;
   private killerAI: KillerAI | null = null;
   private survivorAI: SurvivorAI | null = null;
 
   constructor(canvas: HTMLCanvasElement, input: Input, selection: MenuSelection) {
     this.selection = selection;
-    this.isSingleView = selection.mode === GameMode.VsCPU;
     this.playerRole = selection.playerRole;
 
-    if (this.isSingleView) {
-      this.viewportWidth = CANVAS_WIDTH;
-      this.viewportHeight = GAME_HEIGHT;
-    } else {
-      this.viewportWidth = Math.floor(CANVAS_WIDTH / 2);
-      this.viewportHeight = GAME_HEIGHT;
-    }
-
+    this.viewportWidth = CANVAS_WIDTH;
+    this.viewportHeight = GAME_HEIGHT;
     this.map = new TileMap();
     this.input = input;
     this.renderer = new Renderer(canvas, CANVAS_WIDTH, CANVAS_HEIGHT);
@@ -378,7 +370,7 @@ export class Game {
       killerInteract = aiResult.interact;
       killerAbilityInput = aiResult.ability;
       this.killer.walking = aiResult.walk;
-    } else if (this.playerRole === PlayerRole.Killer && this.isSingleView) {
+    } else if (this.playerRole === PlayerRole.Killer) {
       // Player controls killer with WASD in CPU mode
       if (this.input.isDown('KeyW')) kdy -= 1;
       if (this.input.isDown('KeyS')) kdy += 1;
@@ -393,7 +385,7 @@ export class Game {
       this.killer.walking = this.input.isDown('ShiftRight');
     }
 
-    const playingAsKiller = this.playerRole === PlayerRole.Killer && this.isSingleView;
+    const playingAsKiller = this.playerRole === PlayerRole.Killer;
     const survivorLocker = this.lockers.find((l) => l.occupant === this.survivor);
     const isHooked = this.hooks.some((h) => h.hooked === this.survivor);
 
@@ -724,38 +716,18 @@ export class Game {
       exitGates: this.exitGates,
     };
 
-    if (this.isSingleView) {
-      const isKillerPlayer = this.playerRole === PlayerRole.Killer;
-      const view: RenderView = {
-        camera: isKillerPlayer ? this.killerCamera : this.survivorCamera,
-        fog: isKillerPlayer ? this.killerFog : this.survivorFog,
-        character: isKillerPlayer ? this.killer : this.survivor,
-        offsetX: 0, offsetY: 0,
-        width: this.viewportWidth, height: this.viewportHeight,
-      };
-      this.renderer.renderView(view, this.map, characters, objects, this.scratchMarks, this.killer, this.survivor, alpha);
-      this.renderAbilityProjectiles(view);
-      if (!isKillerPlayer) {
-        this.renderer.renderSkillCheck(view, this.skillCheck, this.killer);
-      }
-    } else {
-      const survivorView: RenderView = {
-        camera: this.survivorCamera, fog: this.survivorFog, character: this.survivor,
-        offsetX: 0, offsetY: 0, width: this.viewportWidth, height: this.viewportHeight,
-      };
-      const killerView: RenderView = {
-        camera: this.killerCamera, fog: this.killerFog, character: this.killer,
-        offsetX: this.viewportWidth, offsetY: 0, width: this.viewportWidth, height: this.viewportHeight,
-      };
-
-      this.renderer.renderView(survivorView, this.map, characters, objects, this.scratchMarks, this.killer, this.survivor, alpha);
-      this.renderAbilityProjectiles(survivorView);
-      this.renderer.renderSkillCheck(survivorView, this.skillCheck, this.killer);
-
-      this.renderer.renderView(killerView, this.map, characters, objects, this.scratchMarks, this.killer, this.survivor, alpha);
-      this.renderAbilityProjectiles(killerView);
-
-      this.renderer.renderSplitDivider();
+    const isKillerPlayer = this.playerRole === PlayerRole.Killer;
+    const view: RenderView = {
+      camera: isKillerPlayer ? this.killerCamera : this.survivorCamera,
+      fog: isKillerPlayer ? this.killerFog : this.survivorFog,
+      character: isKillerPlayer ? this.killer : this.survivor,
+      offsetX: 0, offsetY: 0,
+      width: this.viewportWidth, height: this.viewportHeight,
+    };
+    this.renderer.renderView(view, this.map, characters, objects, this.scratchMarks, this.killer, this.survivor, alpha);
+    this.renderAbilityProjectiles(view);
+    if (!isKillerPlayer) {
+      this.renderer.renderSkillCheck(view, this.skillCheck, this.killer);
     }
 
     // Info panel (DOM-based, fixed at browser bottom)
@@ -764,7 +736,6 @@ export class Game {
       this.survivor, this.killer,
       this.generatorsCompleted, this.gatesPowered, this.isRepairing,
       this.survivorAbility, this.killerAbility,
-      this.isSingleView,
       hookedHook,
       this.playerRole,
     );
@@ -783,15 +754,16 @@ export class Game {
     ctx.translate(view.offsetX, view.offsetY);
 
     // Traps
+    const isKillerView = view.character === this.killer;
     if (this.trapAbility) {
       for (const trap of this.trapAbility.traps) {
         const tileX = trap.tileX;
         const tileY = trap.tileY;
         if (!view.fog.isVisible(tileX, tileY)) {
           // Killer can always see own traps
-          if (view.character !== this.killer) continue;
+          if (!isKillerView) continue;
         }
-        trap.render(ctx, trap.pos.x - view.camera.x, trap.pos.y - view.camera.y);
+        trap.render(ctx, trap.pos.x - view.camera.x, trap.pos.y - view.camera.y, isKillerView);
       }
     }
 

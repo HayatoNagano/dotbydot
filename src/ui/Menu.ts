@@ -11,11 +11,17 @@ export enum MenuState {
   SurvivorSelect = 'survivor_select',
   KillerSelect = 'killer_select',
   Playing = 'playing',
+  // Online states
+  OnlineLobby = 'online_lobby',
+  OnlineWaiting = 'online_waiting',
+  OnlineJoinInput = 'online_join_input',
+  OnlineReady = 'online_ready',
 }
 
 export enum GameMode {
   Local2P = 'local_2p',
   VsCPU = 'vs_cpu',
+  Online = 'online',
 }
 
 export enum PlayerRole {
@@ -57,6 +63,19 @@ export class Menu {
   selectedKiller = 0;
   private cursorIndex = 0;
 
+  // Online state
+  onlineRole: 'host' | 'guest' | null = null;
+  roomCode = '';
+  roomCodeInput = '';
+  onlineError: string | null = null;
+  opponentJoined = false;
+  /** Callback: called when user wants to create a room */
+  onCreateRoom: (() => void) | null = null;
+  /** Callback: called when user wants to join a room */
+  onJoinRoom: ((code: string) => void) | null = null;
+  /** Callback: called when user starts the online game */
+  onOnlineStart: (() => void) | null = null;
+
   update(input: Input): MenuSelection | null {
     switch (this.state) {
       case MenuState.Title:
@@ -67,25 +86,95 @@ export class Menu {
         }
         break;
 
-      case MenuState.ModeSelect:
+      case MenuState.ModeSelect: {
+        const modeCount = 3;
         if (input.wasPressed('ArrowUp') || input.wasPressed('KeyW')) {
-          this.cursorIndex = (this.cursorIndex + 1) % 2;
+          this.cursorIndex = (this.cursorIndex + modeCount - 1) % modeCount;
           audioManager.playMenuMove();
         }
         if (input.wasPressed('ArrowDown') || input.wasPressed('KeyS')) {
+          this.cursorIndex = (this.cursorIndex + 1) % modeCount;
+          audioManager.playMenuMove();
+        }
+        if (input.wasPressed('Space') || input.wasPressed('Enter')) {
+          if (this.cursorIndex === 0) {
+            this.mode = GameMode.Local2P;
+            this.state = MenuState.RoleSelect;
+          } else if (this.cursorIndex === 1) {
+            this.mode = GameMode.VsCPU;
+            this.state = MenuState.RoleSelect;
+          } else {
+            this.mode = GameMode.Online;
+            this.state = MenuState.OnlineLobby;
+            this.onlineError = null;
+          }
+          this.cursorIndex = 0;
+          audioManager.playMenuSelect();
+        }
+        break;
+      }
+
+      case MenuState.OnlineLobby:
+        if (input.wasPressed('ArrowUp') || input.wasPressed('KeyW') ||
+            input.wasPressed('ArrowDown') || input.wasPressed('KeyS')) {
           this.cursorIndex = (this.cursorIndex + 1) % 2;
           audioManager.playMenuMove();
         }
         if (input.wasPressed('Space') || input.wasPressed('Enter')) {
-          this.mode = this.cursorIndex === 0 ? GameMode.Local2P : GameMode.VsCPU;
-          if (this.mode === GameMode.VsCPU) {
-            this.state = MenuState.RoleSelect;
+          if (this.cursorIndex === 0) {
+            // Create room
+            this.onlineRole = 'host';
+            this.playerRole = PlayerRole.Survivor;
+            this.state = MenuState.OnlineWaiting;
+            this.opponentJoined = false;
+            this.onCreateRoom?.();
           } else {
-            this.playerRole = PlayerRole.Survivor; // not relevant for 2P
-            this.state = MenuState.SurvivorSelect;
+            // Join room
+            this.state = MenuState.OnlineJoinInput;
+            this.roomCodeInput = '';
+            this.onlineError = null;
           }
-          this.cursorIndex = 0;
           audioManager.playMenuSelect();
+        }
+        if (input.wasPressed('Escape')) {
+          this.state = MenuState.ModeSelect;
+          this.cursorIndex = 0;
+          audioManager.playMenuMove();
+        }
+        break;
+
+      case MenuState.OnlineJoinInput:
+        // Text input for room code
+        this.handleCodeInput(input);
+        if (input.wasPressed('Enter') && this.roomCodeInput.length === 4) {
+          this.onlineRole = 'guest';
+          this.playerRole = PlayerRole.Killer;
+          this.onlineError = null;
+          this.onJoinRoom?.(this.roomCodeInput);
+          this.state = MenuState.OnlineWaiting;
+          audioManager.playMenuSelect();
+        }
+        if (input.wasPressed('Escape')) {
+          this.state = MenuState.OnlineLobby;
+          this.cursorIndex = 1;
+          audioManager.playMenuMove();
+        }
+        break;
+
+      case MenuState.OnlineWaiting:
+        if (this.opponentJoined && this.onlineRole === 'host') {
+          this.state = MenuState.SurvivorSelect;
+          this.cursorIndex = 0;
+        }
+        if (this.opponentJoined && this.onlineRole === 'guest') {
+          this.state = MenuState.KillerSelect;
+          this.cursorIndex = 0;
+        }
+        if (input.wasPressed('Escape')) {
+          this.state = MenuState.OnlineLobby;
+          this.cursorIndex = 0;
+          this.onlineRole = null;
+          audioManager.playMenuMove();
         }
         break;
 
@@ -122,12 +211,28 @@ export class Menu {
         }
         if (input.wasPressed('Space') || input.wasPressed('Enter')) {
           this.selectedSurvivor = this.cursorIndex;
+          if (this.mode === GameMode.Online) {
+            // Online host: survivor selected → start game (killer is default for guest)
+            this.selectedKiller = 0;
+            this.state = MenuState.Playing;
+            audioManager.playMenuSelect();
+            return {
+              mode: this.mode,
+              playerRole: this.playerRole,
+              survivorDef: SURVIVOR_DEFS[this.selectedSurvivor],
+              killerDef: KILLER_DEFS[this.selectedKiller],
+            };
+          }
           this.state = MenuState.KillerSelect;
           this.cursorIndex = 0;
           audioManager.playMenuSelect();
         }
         if (input.wasPressed('Escape')) {
-          this.state = this.mode === GameMode.VsCPU ? MenuState.RoleSelect : MenuState.ModeSelect;
+          if (this.mode === GameMode.Online) {
+            this.state = MenuState.OnlineLobby;
+          } else {
+            this.state = this.mode === GameMode.VsCPU ? MenuState.RoleSelect : MenuState.ModeSelect;
+          }
           this.cursorIndex = 0;
           audioManager.playMenuMove();
         }
@@ -144,6 +249,10 @@ export class Menu {
         }
         if (input.wasPressed('Space') || input.wasPressed('Enter')) {
           this.selectedKiller = this.cursorIndex;
+          if (this.mode === GameMode.Online) {
+            // Online guest: killer selected → start game (survivor is default for host)
+            this.selectedSurvivor = 0;
+          }
           this.state = MenuState.Playing;
           audioManager.playMenuSelect();
           return {
@@ -154,7 +263,11 @@ export class Menu {
           };
         }
         if (input.wasPressed('Escape')) {
-          this.state = MenuState.SurvivorSelect;
+          if (this.mode === GameMode.Online) {
+            this.state = MenuState.OnlineLobby;
+          } else {
+            this.state = MenuState.SurvivorSelect;
+          }
           this.cursorIndex = 0;
           audioManager.playMenuMove();
         }
@@ -182,6 +295,15 @@ export class Menu {
         break;
       case MenuState.KillerSelect:
         this.renderCharSelect(ctx, 'キラーを選択', KILLER_DEFS);
+        break;
+      case MenuState.OnlineLobby:
+        this.renderOnlineLobby(ctx);
+        break;
+      case MenuState.OnlineJoinInput:
+        this.renderJoinInput(ctx);
+        break;
+      case MenuState.OnlineWaiting:
+        this.renderOnlineWaiting(ctx);
         break;
     }
   }
@@ -287,7 +409,7 @@ export class Menu {
     ctx.font = 'bold 24px monospace';
     ctx.fillText('モード選択', CANVAS_WIDTH / 2, 150);
 
-    const options = ['ローカル 2人対戦', 'CPU 対戦'];
+    const options = ['ローカル 2人対戦', 'CPU 対戦', 'オンライン対戦'];
     for (let i = 0; i < options.length; i++) {
       const y = 240 + i * 70;
       ctx.fillStyle = i === this.cursorIndex ? '#ff2244' : '#666';
@@ -374,5 +496,148 @@ export class Menu {
     ctx.font = '12px monospace';
     ctx.fillText('ESC: 戻る　↑↓: 選択　SPACE: 決定', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
     ctx.textAlign = 'left';
+  }
+
+  // ─── Online lobby screens ───
+
+  private renderOnlineLobby(ctx: CanvasRenderingContext2D): void {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px monospace';
+    ctx.fillText('オンライン対戦', CANVAS_WIDTH / 2, 150);
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = '13px monospace';
+    ctx.fillText('ホスト = サバイバー / ゲスト = キラー', CANVAS_WIDTH / 2, 190);
+
+    const options = ['部屋を作成 (ホスト)', '部屋に参加 (ゲスト)'];
+    for (let i = 0; i < options.length; i++) {
+      const y = 270 + i * 70;
+      ctx.fillStyle = i === this.cursorIndex ? '#ff2244' : '#666';
+      ctx.font = '20px monospace';
+      ctx.fillText(options[i], CANVAS_WIDTH / 2, y);
+      if (i === this.cursorIndex) {
+        ctx.fillText('▶', CANVAS_WIDTH / 2 - 180, y);
+      }
+    }
+
+    if (this.onlineError) {
+      ctx.fillStyle = '#ff4444';
+      ctx.font = '14px monospace';
+      ctx.fillText(this.onlineError, CANVAS_WIDTH / 2, 440);
+    }
+
+    ctx.fillStyle = '#555';
+    ctx.font = '12px monospace';
+    ctx.fillText('ESC: 戻る　↑↓: 選択　SPACE: 決定', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+    ctx.textAlign = 'left';
+  }
+
+  private renderJoinInput(ctx: CanvasRenderingContext2D): void {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px monospace';
+    ctx.fillText('ルームコードを入力', CANVAS_WIDTH / 2, 180);
+
+    // Code display
+    const code = this.roomCodeInput.padEnd(4, '_');
+    ctx.font = 'bold 48px monospace';
+    ctx.fillStyle = '#ff8844';
+    ctx.letterSpacing = '12px';
+    ctx.fillText(code, CANVAS_WIDTH / 2, 300);
+    ctx.letterSpacing = '0px';
+
+    // Cursor blink
+    if (this.roomCodeInput.length < 4) {
+      const blink = Math.sin(Date.now() / 300) > 0;
+      if (blink) {
+        const charW = 36;
+        const startX = CANVAS_WIDTH / 2 - charW * 2 + this.roomCodeInput.length * charW + 6;
+        ctx.fillStyle = '#ff8844';
+        ctx.fillRect(startX, 310, charW - 4, 3);
+      }
+    }
+
+    if (this.onlineError) {
+      ctx.fillStyle = '#ff4444';
+      ctx.font = '14px monospace';
+      ctx.fillText(this.onlineError, CANVAS_WIDTH / 2, 380);
+    }
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = '14px monospace';
+    ctx.fillText('4文字のコードを入力してENTERで参加', CANVAS_WIDTH / 2, 420);
+
+    ctx.fillStyle = '#555';
+    ctx.font = '12px monospace';
+    ctx.fillText('ESC: 戻る　ENTER: 参加', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+    ctx.textAlign = 'left';
+  }
+
+  private renderOnlineWaiting(ctx: CanvasRenderingContext2D): void {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px monospace';
+
+    if (this.onlineRole === 'host') {
+      ctx.fillText('部屋を作成しました', CANVAS_WIDTH / 2, 180);
+
+      // Room code
+      ctx.fillStyle = '#ff8844';
+      ctx.font = 'bold 56px monospace';
+      ctx.letterSpacing = '16px';
+      ctx.fillText(this.roomCode, CANVAS_WIDTH / 2, 280);
+      ctx.letterSpacing = '0px';
+
+      ctx.fillStyle = '#aaa';
+      ctx.font = '14px monospace';
+      ctx.fillText('このコードを相手に伝えてください', CANVAS_WIDTH / 2, 330);
+
+      // Waiting animation
+      const dots = '.'.repeat(Math.floor(Date.now() / 500) % 4);
+      ctx.fillStyle = '#888';
+      ctx.font = '18px monospace';
+      ctx.fillText(`対戦相手を待っています${dots}`, CANVAS_WIDTH / 2, 400);
+    } else {
+      ctx.fillText('接続中...', CANVAS_WIDTH / 2, 280);
+    }
+
+    if (this.onlineError) {
+      ctx.fillStyle = '#ff4444';
+      ctx.font = '14px monospace';
+      ctx.fillText(this.onlineError, CANVAS_WIDTH / 2, 450);
+    }
+
+    ctx.fillStyle = '#555';
+    ctx.font = '12px monospace';
+    ctx.fillText('ESC: キャンセル', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+    ctx.textAlign = 'left';
+  }
+
+  /** Handle keyboard input for room code entry */
+  private handleCodeInput(input: Input): void {
+    if (this.roomCodeInput.length < 4) {
+      // Check A-Z and 0-9 keys
+      const letters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+      for (const ch of letters) {
+        if (input.wasPressed(`Key${ch}`)) {
+          this.roomCodeInput += ch;
+          audioManager.playMenuMove();
+          return;
+        }
+      }
+      for (let d = 2; d <= 9; d++) {
+        if (input.wasPressed(`Digit${d}`)) {
+          this.roomCodeInput += String(d);
+          audioManager.playMenuMove();
+          return;
+        }
+      }
+    }
+    // Backspace
+    if (input.wasPressed('Backspace') && this.roomCodeInput.length > 0) {
+      this.roomCodeInput = this.roomCodeInput.slice(0, -1);
+      audioManager.playMenuMove();
+    }
   }
 }

@@ -59,7 +59,6 @@ export class InfoPanel {
     isRepairing: boolean,
     survivorAbility: Ability | null,
     killerAbility: Ability | null,
-    isSingleView: boolean,
     hookedHook: Hook | null,
     playerRole: PlayerRole = PlayerRole.Survivor,
   ): void {
@@ -133,12 +132,10 @@ export class InfoPanel {
     this.killerSection.innerHTML = killerHtml;
 
     // Controls
-    if (isSingleView && playerRole === PlayerRole.Killer) {
+    if (playerRole === PlayerRole.Killer) {
       this.controlsSection.textContent = '操作 — 移動:WASD  攻撃/破壊/搬送:E  歩行:Shift  能力:Q';
-    } else if (isSingleView) {
-      this.controlsSection.textContent = '操作 — 移動:WASD  アクション:E  スキルチェック:Space  歩行:Shift  能力:Q';
     } else {
-      this.controlsSection.textContent = 'サバイバー — 移動:WASD  アクション:E  スキルチェック:Space  歩行:Shift  能力:Q ｜ キラー — 移動:矢印  攻撃/破壊:.  搬送降ろす:/  能力:,';
+      this.controlsSection.textContent = '操作 — 移動:WASD  アクション:E  スキルチェック:Space  歩行:Shift  能力:Q';
     }
   }
 

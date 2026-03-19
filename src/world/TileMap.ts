@@ -6,6 +6,7 @@ export class TileMap {
   readonly rows = MAP_ROWS;
   readonly tileSize = TILE_SIZE;
   readonly tiles: TileType[];
+  readonly seed = 42;
 
   constructor() {
     this.tiles = new Array(this.cols * this.rows).fill(TileType.Floor);
