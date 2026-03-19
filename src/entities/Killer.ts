@@ -7,6 +7,7 @@ export class Killer extends Character {
   attackCooldown = 0;
   stunTimer = 0;
   carrying: Survivor | null = null;
+  characterId: string = 'trapper';
   private static readonly ATTACK_COOLDOWN = 1.5; // seconds
   private static readonly ATTACK_RANGE = TILE_SIZE * 1.5;
   private static readonly STUN_DURATION = 2.0;
@@ -220,13 +221,23 @@ export class Killer extends Character {
     ctx.fillStyle = '#888';
     ctx.fillRect(cx - p, bodyY + bodyH - p, 2 * p, p);
     // Shoulder pads
-    ctx.fillStyle = baseDark;
-    ctx.fillRect(bodyX - p, bodyY, 2 * p, 2 * p);
-    ctx.fillRect(bodyX + bodyW - p, bodyY, 2 * p, 2 * p);
-    // Shoulder pad highlights
-    ctx.fillStyle = baseColor;
-    ctx.fillRect(bodyX - p, bodyY, 2 * p, p);
-    ctx.fillRect(bodyX + bodyW - p, bodyY, 2 * p, p);
+    if (this.characterId === 'huntress') {
+      // Huntress: less bulky shoulders (1p instead of 2p tall)
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(bodyX - p, bodyY, p, p);
+      ctx.fillRect(bodyX + bodyW, bodyY, p, p);
+      ctx.fillStyle = baseColor;
+      ctx.fillRect(bodyX - p, bodyY, p, p);
+      ctx.fillRect(bodyX + bodyW, bodyY, p, p);
+    } else {
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(bodyX - p, bodyY, 2 * p, 2 * p);
+      ctx.fillRect(bodyX + bodyW - p, bodyY, 2 * p, 2 * p);
+      // Shoulder pad highlights
+      ctx.fillStyle = baseColor;
+      ctx.fillRect(bodyX - p, bodyY, 2 * p, p);
+      ctx.fillRect(bodyX + bodyW - p, bodyY, 2 * p, p);
+    }
 
     // ── Arms ──
     const armW = 2 * p;
@@ -249,59 +260,110 @@ export class Killer extends Character {
     ctx.fillStyle = '#333';
     ctx.fillRect(bodyX + bodyW, bodyY + armH - p + armSwing, armW + 2 * p, p);
 
-    // ── Weapon (cleaver) — right hand ──
+    // ── Weapon — right hand ──
     if (!this.isStunned) {
       const wepX = bodyX + bodyW + armW;
       const wepSwing = armSwing;
-      ctx.fillStyle = '#6B4226';
-      ctx.fillRect(wepX, bodyY + wepSwing, p, 3 * p);
-      ctx.fillStyle = '#8B5A2B';
-      ctx.fillRect(wepX, bodyY + wepSwing + p, p, p);
-      ctx.fillStyle = '#aab';
-      ctx.fillRect(wepX - p, bodyY + 3 * p + wepSwing, 3 * p, 4 * p);
-      ctx.fillStyle = '#ccd';
-      ctx.fillRect(wepX - p, bodyY + 3 * p + wepSwing, p, 4 * p);
-      ctx.fillStyle = '#889';
-      ctx.fillRect(wepX + p, bodyY + 3 * p + wepSwing, p, 4 * p);
-      ctx.fillStyle = 'rgba(180,0,0,0.5)';
-      ctx.fillRect(wepX, bodyY + 5 * p + wepSwing, p, 2 * p);
+      if (this.characterId === 'huntress') {
+        // Huntress: hatchet — shorter handle, smaller blade
+        ctx.fillStyle = '#6B4226';
+        ctx.fillRect(wepX, bodyY + wepSwing, p, 2 * p);
+        ctx.fillStyle = '#8B5A2B';
+        ctx.fillRect(wepX, bodyY + wepSwing + p, p, p);
+        ctx.fillStyle = '#aab';
+        ctx.fillRect(wepX - p, bodyY + 2 * p + wepSwing, 2 * p, 2 * p);
+        ctx.fillStyle = '#ccd';
+        ctx.fillRect(wepX - p, bodyY + 2 * p + wepSwing, p, 2 * p);
+        ctx.fillStyle = 'rgba(180,0,0,0.5)';
+        ctx.fillRect(wepX, bodyY + 3 * p + wepSwing, p, p);
+      } else {
+        // Trapper: cleaver
+        ctx.fillStyle = '#6B4226';
+        ctx.fillRect(wepX, bodyY + wepSwing, p, 3 * p);
+        ctx.fillStyle = '#8B5A2B';
+        ctx.fillRect(wepX, bodyY + wepSwing + p, p, p);
+        ctx.fillStyle = '#aab';
+        ctx.fillRect(wepX - p, bodyY + 3 * p + wepSwing, 3 * p, 4 * p);
+        ctx.fillStyle = '#ccd';
+        ctx.fillRect(wepX - p, bodyY + 3 * p + wepSwing, p, 4 * p);
+        ctx.fillStyle = '#889';
+        ctx.fillRect(wepX + p, bodyY + 3 * p + wepSwing, p, 4 * p);
+        ctx.fillStyle = 'rgba(180,0,0,0.5)';
+        ctx.fillRect(wepX, bodyY + 5 * p + wepSwing, p, 2 * p);
+      }
     }
 
-    // ── Head — hood with deep shadow ──
-    ctx.fillStyle = baseVDark;
-    ctx.fillRect(headX - p, headY, headW + 2 * p, headH + p);
-    // Hood peak
-    ctx.fillStyle = baseVDark;
-    ctx.fillRect(cx - 2 * p, headY - p, 4 * p, p);
-    // Hood inner fabric
-    ctx.fillStyle = baseDark;
-    ctx.fillRect(headX, headY + p, headW, headH - p);
-    // Face void (deep shadow)
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(headX + p, headY + 2 * p, headW - 2 * p, headH - 3 * p);
-    // Darker inner shadow
-    ctx.fillStyle = '#050505';
-    ctx.fillRect(headX + 2 * p, headY + 3 * p, headW - 4 * p, p);
+    // ── Head ──
+    if (this.characterId === 'huntress') {
+      // Huntress: rabbit mask/helmet
+      const maskColor = '#886655';
+      const faceColor = '#aa9988';
+      // Mask base
+      ctx.fillStyle = maskColor;
+      ctx.fillRect(headX, headY, headW, headH);
+      // Rabbit ears (2 tall pixels on each side of head top)
+      ctx.fillRect(headX + p, headY - 2 * p, p, 2 * p);
+      ctx.fillRect(headX + headW - 2 * p, headY - 2 * p, p, 2 * p);
+      // Inner ear
+      ctx.fillStyle = '#997766';
+      ctx.fillRect(headX + p, headY - p, p, p);
+      ctx.fillRect(headX + headW - 2 * p, headY - p, p, p);
+      // Face area (pale mask)
+      ctx.fillStyle = faceColor;
+      ctx.fillRect(headX + p, headY + 2 * p, headW - 2 * p, headH - 3 * p);
+      // Dark eye holes
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(headX + 2 * p, headY + 3 * p, p, p);
+      ctx.fillRect(headX + headW - 3 * p, headY + 3 * p, p, p);
+      // Glowing red eyes
+      if (!this.isStunned) {
+        const eyeRow = headY + 3 * p;
+        const flicker = 0.6 + Math.sin(Date.now() / 300) * 0.4;
+        ctx.fillStyle = `rgba(255, 0, 0, ${flicker * 0.15})`;
+        ctx.fillRect(headX + p, eyeRow - p, headW - 2 * p, 3 * p);
+        ctx.globalAlpha = flicker;
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(headX + 2 * p, eyeRow, p, p);
+        ctx.fillRect(headX + headW - 3 * p, eyeRow, p, p);
+        ctx.globalAlpha = 1;
+      }
+    } else {
+      // Trapper: hood with deep shadow
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(headX - p, headY, headW + 2 * p, headH + p);
+      // Hood peak
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(cx - 2 * p, headY - p, 4 * p, p);
+      // Hood inner fabric
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(headX, headY + p, headW, headH - p);
+      // Face void (deep shadow)
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(headX + p, headY + 2 * p, headW - 2 * p, headH - 3 * p);
+      // Darker inner shadow
+      ctx.fillStyle = '#050505';
+      ctx.fillRect(headX + 2 * p, headY + 3 * p, headW - 4 * p, p);
 
-    // ── Glowing red eyes ──
-    if (!this.isStunned) {
-      const eyeRow = headY + 3 * p;
-      const flicker = 0.6 + Math.sin(Date.now() / 300) * 0.4;
-      // Red glow aura
-      ctx.fillStyle = `rgba(255, 0, 0, ${flicker * 0.15})`;
-      ctx.fillRect(headX + p, eyeRow - p, headW - 2 * p, 3 * p);
-      ctx.globalAlpha = flicker;
-      // Left eye
-      ctx.fillStyle = '#ff0000';
-      ctx.fillRect(headX + 2 * p, eyeRow, p, p);
-      ctx.fillStyle = '#ff4422';
-      ctx.fillRect(headX + 2 * p + p, eyeRow, Math.floor(p / 2), p);
-      // Right eye
-      ctx.fillStyle = '#ff0000';
-      ctx.fillRect(headX + headW - 3 * p, eyeRow, p, p);
-      ctx.fillStyle = '#ff4422';
-      ctx.fillRect(headX + headW - 3 * p - Math.floor(p / 2), eyeRow, Math.floor(p / 2), p);
-      ctx.globalAlpha = 1;
+      // ── Glowing red eyes ──
+      if (!this.isStunned) {
+        const eyeRow = headY + 3 * p;
+        const flicker = 0.6 + Math.sin(Date.now() / 300) * 0.4;
+        // Red glow aura
+        ctx.fillStyle = `rgba(255, 0, 0, ${flicker * 0.15})`;
+        ctx.fillRect(headX + p, eyeRow - p, headW - 2 * p, 3 * p);
+        ctx.globalAlpha = flicker;
+        // Left eye
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(headX + 2 * p, eyeRow, p, p);
+        ctx.fillStyle = '#ff4422';
+        ctx.fillRect(headX + 2 * p + p, eyeRow, Math.floor(p / 2), p);
+        // Right eye
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(headX + headW - 3 * p, eyeRow, p, p);
+        ctx.fillStyle = '#ff4422';
+        ctx.fillRect(headX + headW - 3 * p - Math.floor(p / 2), eyeRow, Math.floor(p / 2), p);
+        ctx.globalAlpha = 1;
+      }
     }
   }
 
@@ -364,12 +426,18 @@ export class Killer extends Character {
     ctx.fillStyle = '#444';
     ctx.fillRect(bodyX, bodyY + bodyH - p, bodyW, p);
     // Shoulder pads (back)
-    ctx.fillStyle = baseDark;
-    ctx.fillRect(bodyX - p, bodyY, 2 * p, 2 * p);
-    ctx.fillRect(bodyX + bodyW - p, bodyY, 2 * p, 2 * p);
-    ctx.fillStyle = baseColor;
-    ctx.fillRect(bodyX - p, bodyY, 2 * p, p);
-    ctx.fillRect(bodyX + bodyW - p, bodyY, 2 * p, p);
+    if (this.characterId === 'huntress') {
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(bodyX - p, bodyY, p, p);
+      ctx.fillRect(bodyX + bodyW, bodyY, p, p);
+    } else {
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(bodyX - p, bodyY, 2 * p, 2 * p);
+      ctx.fillRect(bodyX + bodyW - p, bodyY, 2 * p, 2 * p);
+      ctx.fillStyle = baseColor;
+      ctx.fillRect(bodyX - p, bodyY, 2 * p, p);
+      ctx.fillRect(bodyX + bodyW - p, bodyY, 2 * p, p);
+    }
 
     // ── Arms (back view — close to body) ──
     const armW = 2 * p;
@@ -384,38 +452,71 @@ export class Killer extends Character {
     ctx.fillRect(bodyX - armW, bodyY + armH - p + armSwing, armW, p);
     ctx.fillRect(bodyX + bodyW, bodyY + armH - p - armSwing, armW, p);
 
-    // ── Weapon slung on back (diagonal cleaver) ──
+    // ── Weapon slung on back ──
     if (!this.isStunned) {
-      // Handle across back (diagonal)
-      ctx.fillStyle = '#6B4226';
-      ctx.fillRect(cx - 2 * p, bodyY + p, p, 3 * p);
-      ctx.fillRect(cx - p, bodyY, p, 3 * p);
-      // Blade poking above shoulder
-      ctx.fillStyle = '#aab';
-      ctx.fillRect(cx - p, bodyY - 2 * p, 2 * p, 3 * p);
-      ctx.fillStyle = '#ccd';
-      ctx.fillRect(cx - p, bodyY - 2 * p, p, 3 * p);
-      // Strap across back
-      ctx.fillStyle = '#554433';
-      ctx.fillRect(bodyX + p, bodyY + p, bodyW - 2 * p, p);
+      if (this.characterId === 'huntress') {
+        // Huntress: hatchet on back — smaller
+        ctx.fillStyle = '#6B4226';
+        ctx.fillRect(cx - p, bodyY + p, p, 2 * p);
+        ctx.fillStyle = '#aab';
+        ctx.fillRect(cx - p, bodyY - p, 2 * p, 2 * p);
+        ctx.fillStyle = '#ccd';
+        ctx.fillRect(cx - p, bodyY - p, p, 2 * p);
+        // Strap
+        ctx.fillStyle = '#554433';
+        ctx.fillRect(bodyX + p, bodyY + p, bodyW - 2 * p, p);
+      } else {
+        // Trapper: diagonal cleaver
+        ctx.fillStyle = '#6B4226';
+        ctx.fillRect(cx - 2 * p, bodyY + p, p, 3 * p);
+        ctx.fillRect(cx - p, bodyY, p, 3 * p);
+        ctx.fillStyle = '#aab';
+        ctx.fillRect(cx - p, bodyY - 2 * p, 2 * p, 3 * p);
+        ctx.fillStyle = '#ccd';
+        ctx.fillRect(cx - p, bodyY - 2 * p, p, 3 * p);
+        // Strap across back
+        ctx.fillStyle = '#554433';
+        ctx.fillRect(bodyX + p, bodyY + p, bodyW - 2 * p, p);
+      }
     }
 
-    // ── Head — back of hood/cape ──
-    ctx.fillStyle = baseVDark;
-    ctx.fillRect(headX - p, headY, headW + 2 * p, headH + p);
-    // Hood peak
-    ctx.fillStyle = baseVDark;
-    ctx.fillRect(cx - 2 * p, headY - p, 4 * p, p);
-    // Hood fabric folds
-    ctx.fillStyle = baseDark;
-    ctx.fillRect(headX, headY + p, headW, headH - p);
-    // Hood center seam
-    ctx.fillStyle = baseVDark;
-    ctx.fillRect(cx - Math.floor(p / 2), headY + p, p, headH - p);
-    // Hood fold details
-    ctx.fillStyle = baseColor;
-    ctx.fillRect(headX + p, headY + 2 * p, p, headH - 3 * p);
-    ctx.fillRect(headX + headW - 2 * p, headY + 2 * p, p, headH - 3 * p);
+    // ── Head — back view ──
+    if (this.characterId === 'huntress') {
+      // Huntress: rabbit mask from behind
+      const maskColor = '#886655';
+      ctx.fillStyle = maskColor;
+      ctx.fillRect(headX, headY, headW, headH);
+      // Rabbit ears visible from behind
+      ctx.fillRect(headX + p, headY - 2 * p, p, 2 * p);
+      ctx.fillRect(headX + headW - 2 * p, headY - 2 * p, p, 2 * p);
+      // Inner ear
+      ctx.fillStyle = '#997766';
+      ctx.fillRect(headX + p, headY - p, p, p);
+      ctx.fillRect(headX + headW - 2 * p, headY - p, p, p);
+      // Back detail
+      ctx.fillStyle = '#776655';
+      ctx.fillRect(headX + p, headY + p, headW - 2 * p, headH - 2 * p);
+      // Center seam
+      ctx.fillStyle = '#665544';
+      ctx.fillRect(cx - Math.floor(p / 2), headY + p, p, headH - p);
+    } else {
+      // Trapper: hood/cape
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(headX - p, headY, headW + 2 * p, headH + p);
+      // Hood peak
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(cx - 2 * p, headY - p, 4 * p, p);
+      // Hood fabric folds
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(headX, headY + p, headW, headH - p);
+      // Hood center seam
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(cx - Math.floor(p / 2), headY + p, p, headH - p);
+      // Hood fold details
+      ctx.fillStyle = baseColor;
+      ctx.fillRect(headX + p, headY + 2 * p, p, headH - 3 * p);
+      ctx.fillRect(headX + headW - 2 * p, headY + 2 * p, p, headH - 3 * p);
+    }
     // NO eyes visible from behind
   }
 
@@ -482,10 +583,15 @@ export class Killer extends Character {
     const buckleX = dir > 0 ? bodyX + bodyW - 2 * p : bodyX + p;
     ctx.fillRect(buckleX, bodyY + bodyH - p, p, p);
     // Shoulder pad (one visible)
-    ctx.fillStyle = baseDark;
-    ctx.fillRect(bodyX + (dir > 0 ? bodyW - p : 0), bodyY, 2 * p, 2 * p);
-    ctx.fillStyle = baseColor;
-    ctx.fillRect(bodyX + (dir > 0 ? bodyW - p : 0), bodyY, 2 * p, p);
+    if (this.characterId === 'huntress') {
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(bodyX + (dir > 0 ? bodyW : 0), bodyY, p, p);
+    } else {
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(bodyX + (dir > 0 ? bodyW - p : 0), bodyY, 2 * p, 2 * p);
+      ctx.fillStyle = baseColor;
+      ctx.fillRect(bodyX + (dir > 0 ? bodyW - p : 0), bodyY, 2 * p, p);
+    }
 
     // ── Arm — weapon arm on facing side ──
     const armW = 2 * p;
@@ -502,58 +608,98 @@ export class Killer extends Character {
     ctx.fillStyle = '#333';
     ctx.fillRect(armX, bodyY + armH - p + armSwing, armW + p * dir, p);
 
-    // ── Weapon (cleaver) — held in front ──
+    // ── Weapon — held in front ──
     if (!this.isStunned) {
       const wepX = dir > 0 ? armX + armW : armX - 2 * p;
       const wepSwing = armSwing;
-      // Handle
-      ctx.fillStyle = '#6B4226';
-      ctx.fillRect(wepX, bodyY + wepSwing, p, 3 * p);
-      ctx.fillStyle = '#8B5A2B';
-      ctx.fillRect(wepX, bodyY + wepSwing + p, p, p);
-      // Blade
-      ctx.fillStyle = '#aab';
-      ctx.fillRect(wepX - (dir > 0 ? 0 : p), bodyY + 3 * p + wepSwing, 2 * p, 4 * p);
-      // Edge highlight (facing edge)
-      ctx.fillStyle = '#ccd';
-      const edgeX = dir > 0 ? wepX : wepX - p;
-      ctx.fillRect(edgeX, bodyY + 3 * p + wepSwing, p, 4 * p);
-      // Blood
-      ctx.fillStyle = 'rgba(180,0,0,0.5)';
-      ctx.fillRect(wepX, bodyY + 5 * p + wepSwing, p, 2 * p);
+      if (this.characterId === 'huntress') {
+        // Huntress: hatchet — shorter handle, smaller blade
+        ctx.fillStyle = '#6B4226';
+        ctx.fillRect(wepX, bodyY + wepSwing, p, 2 * p);
+        ctx.fillStyle = '#aab';
+        ctx.fillRect(wepX - (dir > 0 ? 0 : p), bodyY + 2 * p + wepSwing, 2 * p, 2 * p);
+        ctx.fillStyle = '#ccd';
+        const edgeX = dir > 0 ? wepX : wepX - p;
+        ctx.fillRect(edgeX, bodyY + 2 * p + wepSwing, p, 2 * p);
+        ctx.fillStyle = 'rgba(180,0,0,0.5)';
+        ctx.fillRect(wepX, bodyY + 3 * p + wepSwing, p, p);
+      } else {
+        // Trapper: cleaver
+        ctx.fillStyle = '#6B4226';
+        ctx.fillRect(wepX, bodyY + wepSwing, p, 3 * p);
+        ctx.fillStyle = '#8B5A2B';
+        ctx.fillRect(wepX, bodyY + wepSwing + p, p, p);
+        ctx.fillStyle = '#aab';
+        ctx.fillRect(wepX - (dir > 0 ? 0 : p), bodyY + 3 * p + wepSwing, 2 * p, 4 * p);
+        ctx.fillStyle = '#ccd';
+        const edgeX = dir > 0 ? wepX : wepX - p;
+        ctx.fillRect(edgeX, bodyY + 3 * p + wepSwing, p, 4 * p);
+        ctx.fillStyle = 'rgba(180,0,0,0.5)';
+        ctx.fillRect(wepX, bodyY + 5 * p + wepSwing, p, 2 * p);
+      }
     }
 
-    // ── Head — profile hood ──
-    // Hood slightly extended in facing direction
-    const hoodExtend = dir * p;
-    ctx.fillStyle = baseVDark;
-    ctx.fillRect(headX - p + Math.min(hoodExtend, 0), headY, headW + 2 * p + Math.abs(hoodExtend), headH + p);
-    // Hood peak
-    ctx.fillStyle = baseVDark;
-    ctx.fillRect(cx - p + dir * p, headY - p, 3 * p, p);
-    // Hood inner fabric
-    ctx.fillStyle = baseDark;
-    ctx.fillRect(headX, headY + p, headW, headH - p);
-    // Face shadow (profile — narrower)
-    const faceX = dir > 0 ? headX + headW - 3 * p : headX + p;
-    ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(faceX, headY + 2 * p, 2 * p, headH - 3 * p);
+    // ── Head — profile ──
+    if (this.characterId === 'huntress') {
+      // Huntress: rabbit mask profile
+      const maskColor = '#886655';
+      const faceColor = '#aa9988';
+      ctx.fillStyle = maskColor;
+      ctx.fillRect(headX, headY, headW, headH);
+      // Rabbit ear on visible side (only one visible in profile)
+      const earX = dir > 0 ? headX + headW - 2 * p : headX + p;
+      ctx.fillRect(earX, headY - 2 * p, p, 2 * p);
+      ctx.fillStyle = '#997766';
+      ctx.fillRect(earX, headY - p, p, p);
+      // Face area on facing side
+      const faceX = dir > 0 ? headX + headW - 3 * p : headX + p;
+      ctx.fillStyle = faceColor;
+      ctx.fillRect(faceX, headY + 2 * p, 2 * p, headH - 3 * p);
+      // Dark eye hole
+      ctx.fillStyle = '#1a1a1a';
+      const eyeHoleX = dir > 0 ? faceX + p : faceX;
+      ctx.fillRect(eyeHoleX, headY + 3 * p, p, p);
+      // Glowing eye
+      if (!this.isStunned) {
+        const eyeRow = headY + 3 * p;
+        const flicker = 0.6 + Math.sin(Date.now() / 300) * 0.4;
+        ctx.fillStyle = `rgba(255, 0, 0, ${flicker * 0.15})`;
+        ctx.fillRect(faceX, eyeRow - p, 2 * p, 3 * p);
+        ctx.globalAlpha = flicker;
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(eyeHoleX, eyeRow, p, p);
+        ctx.globalAlpha = 1;
+      }
+    } else {
+      // Trapper: profile hood
+      const hoodExtend = dir * p;
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(headX - p + Math.min(hoodExtend, 0), headY, headW + 2 * p + Math.abs(hoodExtend), headH + p);
+      // Hood peak
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(cx - p + dir * p, headY - p, 3 * p, p);
+      // Hood inner fabric
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(headX, headY + p, headW, headH - p);
+      // Face shadow (profile — narrower)
+      const faceX = dir > 0 ? headX + headW - 3 * p : headX + p;
+      ctx.fillStyle = '#0a0a0a';
+      ctx.fillRect(faceX, headY + 2 * p, 2 * p, headH - 3 * p);
 
-    // ── Single glowing eye (profile) ──
-    if (!this.isStunned) {
-      const eyeRow = headY + 3 * p;
-      const flicker = 0.6 + Math.sin(Date.now() / 300) * 0.4;
-      // Glow aura
-      ctx.fillStyle = `rgba(255, 0, 0, ${flicker * 0.15})`;
-      ctx.fillRect(faceX, eyeRow - p, 2 * p, 3 * p);
-      ctx.globalAlpha = flicker;
-      // Single eye
-      const eyeX = dir > 0 ? faceX + p : faceX;
-      ctx.fillStyle = '#ff0000';
-      ctx.fillRect(eyeX, eyeRow, p, p);
-      ctx.fillStyle = '#ff4422';
-      ctx.fillRect(eyeX + (dir > 0 ? Math.floor(p / 2) : -Math.floor(p / 2)), eyeRow, Math.floor(p / 2), p);
-      ctx.globalAlpha = 1;
+      // ── Single glowing eye (profile) ──
+      if (!this.isStunned) {
+        const eyeRow = headY + 3 * p;
+        const flicker = 0.6 + Math.sin(Date.now() / 300) * 0.4;
+        ctx.fillStyle = `rgba(255, 0, 0, ${flicker * 0.15})`;
+        ctx.fillRect(faceX, eyeRow - p, 2 * p, 3 * p);
+        ctx.globalAlpha = flicker;
+        const eyeX = dir > 0 ? faceX + p : faceX;
+        ctx.fillStyle = '#ff0000';
+        ctx.fillRect(eyeX, eyeRow, p, p);
+        ctx.fillStyle = '#ff4422';
+        ctx.fillRect(eyeX + (dir > 0 ? Math.floor(p / 2) : -Math.floor(p / 2)), eyeRow, Math.floor(p / 2), p);
+        ctx.globalAlpha = 1;
+      }
     }
   }
 }

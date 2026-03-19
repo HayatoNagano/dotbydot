@@ -3,6 +3,9 @@ import { CANVAS_WIDTH, CANVAS_HEIGHT } from '../constants';
 import { audioManager } from '../audio/AudioManager';
 import { renderPixelTitle } from '../rendering/PixelTitle';
 import { renderCampfireScene } from '../rendering/CampfireScene';
+import { Survivor } from '../entities/Survivor';
+import { Killer } from '../entities/Killer';
+import { Direction } from '../types';
 
 export enum MenuState {
   Title = 'title',
@@ -63,6 +66,12 @@ export class Menu {
   selectedKiller = 0;
   private cursorIndex = 0;
 
+  // Preview characters for selection screen
+  private previewSurvivor: Survivor;
+  private previewKiller: Killer;
+  private previewTime = 0;
+  private previewDir = 0; // cycles through directions
+
   // Online state
   onlineRole: 'host' | 'guest' | null = null;
   roomCode = '';
@@ -75,6 +84,11 @@ export class Menu {
   onJoinRoom: ((code: string) => void) | null = null;
   /** Callback: called when user starts the online game */
   onOnlineStart: (() => void) | null = null;
+
+  constructor() {
+    this.previewSurvivor = new Survivor(0, 0);
+    this.previewKiller = new Killer(0, 0);
+  }
 
   update(input: Input): MenuSelection | null {
     switch (this.state) {
@@ -291,10 +305,10 @@ export class Menu {
         this.renderRoleSelect(ctx);
         break;
       case MenuState.SurvivorSelect:
-        this.renderCharSelect(ctx, 'サバイバーを選択', SURVIVOR_DEFS);
+        this.renderCharSelect(ctx, 'サバイバーを選択', SURVIVOR_DEFS, 'survivor');
         break;
       case MenuState.KillerSelect:
-        this.renderCharSelect(ctx, 'キラーを選択', KILLER_DEFS);
+        this.renderCharSelect(ctx, 'キラーを選択', KILLER_DEFS, 'killer');
         break;
       case MenuState.OnlineLobby:
         this.renderOnlineLobby(ctx);
@@ -457,44 +471,91 @@ export class Menu {
     ctx.textAlign = 'left';
   }
 
-  private renderCharSelect(ctx: CanvasRenderingContext2D, title: string, defs: CharacterDef[]): void {
+  private renderCharSelect(ctx: CanvasRenderingContext2D, title: string, defs: CharacterDef[], type: 'survivor' | 'killer'): void {
+    const CX = CANVAS_WIDTH / 2;
+
     ctx.textAlign = 'center';
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 24px monospace';
-    ctx.fillText(title, CANVAS_WIDTH / 2, 100);
+    ctx.fillText(title, CX, 80);
 
+    // ── Character list (left side) ──
+    const listX = CX - 80;
     for (let i = 0; i < defs.length; i++) {
-      const y = 200 + i * 120;
+      const y = 180 + i * 100;
       const selected = i === this.cursorIndex;
 
       // Character box
       ctx.fillStyle = selected ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.03)';
-      ctx.fillRect(CANVAS_WIDTH / 2 - 220, y - 35, 440, 90);
+      ctx.fillRect(listX - 180, y - 30, 360, 80);
 
       // Color swatch
       ctx.fillStyle = defs[i].color;
-      ctx.fillRect(CANVAS_WIDTH / 2 - 200, y - 18, 30, 30);
+      ctx.fillRect(listX - 160, y - 14, 24, 24);
 
       // Name
       ctx.fillStyle = selected ? '#fff' : '#888';
       ctx.font = 'bold 18px monospace';
-      ctx.fillText(defs[i].nameJp, CANVAS_WIDTH / 2, y);
+      ctx.fillText(defs[i].nameJp, listX, y);
 
       // Description
       ctx.fillStyle = selected ? '#aaa' : '#555';
-      ctx.font = '12px monospace';
-      ctx.fillText(defs[i].description, CANVAS_WIDTH / 2, y + 28);
+      ctx.font = '11px monospace';
+      ctx.fillText(defs[i].description, listX, y + 26);
 
       if (selected) {
         ctx.fillStyle = '#ff2244';
         ctx.font = '18px monospace';
-        ctx.fillText('▶', CANVAS_WIDTH / 2 - 240, y + 5);
+        ctx.fillText('▶', listX - 200, y + 5);
       }
     }
 
+    // ── Character preview (right side, same frame size as left list) ──
+    // Left list box: x = listX-180, w = 360, h = 80 each, y starts at 150
+    // Preview box matches: same width/height, positioned to the right
+    const boxW = 360, boxH = 80 * defs.length + 20 * (defs.length - 1);
+    const boxX = listX - 180 + 360 + 20; // 20px gap from left list
+    const boxY = 180 - 30; // same top as first list item
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    ctx.fillRect(boxX, boxY, boxW, boxH);
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(boxX, boxY, boxW, boxH);
+
+    // Animate: cycle direction every 1.5s, walking animation
+    const t = Date.now() / 1000;
+    const dirCycle = Math.floor(t / 1.5) % 4;
+    const dirs: Direction[] = [Direction.Down, Direction.Right, Direction.Up, Direction.Left];
+
+    // Set up preview character
+    const scale = 1.8;
+    const preview = type === 'survivor' ? this.previewSurvivor : this.previewKiller;
+    preview.color = defs[this.cursorIndex].color;
+    preview.characterId = defs[this.cursorIndex].id;
+    preview.direction = dirs[dirCycle];
+    preview.isMoving = true;
+    preview.animTime = t * 6;
+
+    // Center character in box
+    const boxCX = boxX + boxW / 2;
+    const boxCY = boxY + boxH / 2;
+    ctx.save();
+    ctx.translate(boxCX, boxCY);
+    ctx.scale(scale, scale);
+    preview.render(ctx, -preview.width / 2, -preview.width / 2);
+    ctx.restore();
+
+    // Direction label below character
+    const dirLabels: Record<string, string> = {
+      down: '▼ 前', up: '▲ 後', left: '◀ 左', right: '▶ 右',
+    };
+    ctx.fillStyle = '#666';
+    ctx.font = '11px monospace';
+    ctx.fillText(dirLabels[dirs[dirCycle]], boxCX, boxY + boxH - 10);
+
     ctx.fillStyle = '#555';
     ctx.font = '12px monospace';
-    ctx.fillText('ESC: 戻る　↑↓: 選択　SPACE: 決定', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+    ctx.fillText('ESC: 戻る　↑↓: 選択　SPACE: 決定', CX, CANVAS_HEIGHT - 60);
     ctx.textAlign = 'left';
   }
 

@@ -107,8 +107,10 @@ export class Game {
 
     this.survivor = new Survivor(sSpawn.x * TILE_SIZE + 2, sSpawn.y * TILE_SIZE + 2);
     this.survivor.color = selection.survivorDef.color;
+    this.survivor.characterId = selection.survivorDef.id;
     this.killer = new Killer(kSpawn.x * TILE_SIZE + 2, kSpawn.y * TILE_SIZE + 2);
     this.killer.color = selection.killerDef.color;
+    this.killer.characterId = selection.killerDef.id;
 
     // Setup abilities
     this.setupAbilities(selection);

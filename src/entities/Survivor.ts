@@ -10,6 +10,7 @@ export class Survivor extends Character {
   isBeingCarried = false;
   /** Whether the one-time self-unhook has been used */
   selfUnhookUsed = false;
+  characterId: string = 'runner';
 
   constructor(x: number, y: number) {
     super(x, y, SURVIVOR_RUN_SPEED, COLOR_SURVIVOR);
@@ -53,7 +54,9 @@ export class Survivor extends Character {
     switch (this.health) {
       case HealthState.Healthy:
         skinColor = '#ffd5a0'; skinShadow = '#d4a870';
-        bodyColor = this.color; bodyLight = '#55ffaa'; bodyDark = '#009955';
+        bodyColor = this.color;
+        bodyLight = this.characterId === 'dodger' ? '#88ffcc' : '#55ffaa';
+        bodyDark = '#009955';
         legColor = '#2255aa'; legDark = '#183d7a'; shoeColor = '#333';
         hairColor = '#553322'; hairDark = '#3a2010';
         break;
@@ -310,8 +313,16 @@ export class Survivor extends Character {
     ctx.fillStyle = hairColor;
     ctx.fillRect(headX, headY, headW, 2 * p);
     // Side hair tufts
-    ctx.fillRect(headX, headY + p, p, p);
-    ctx.fillRect(headX + headW - p, headY + p, p, p);
+    if (this.characterId === 'dodger') {
+      // Fenley: longer hair tufts extending down to headY + 3*p
+      ctx.fillRect(headX, headY + p, p, 2 * p);
+      ctx.fillRect(headX + headW - p, headY + p, p, 2 * p);
+      // Ponytail: extra hair pixel extending 1p to the right of the head
+      ctx.fillRect(headX + headW, headY + p, p, p);
+    } else {
+      ctx.fillRect(headX, headY + p, p, p);
+      ctx.fillRect(headX + headW - p, headY + p, p, p);
+    }
 
     // Eyebrows
     ctx.fillStyle = hairColor;
@@ -329,9 +340,21 @@ export class Survivor extends Character {
     ctx.fillRect(headX + p + Math.floor(p / 2), eyeRow, p, p);
     ctx.fillRect(headX + headW - 3 * p + Math.floor(p / 2), eyeRow, p, p);
 
+    // Eyelashes for Fenley (dodger)
+    if (this.characterId === 'dodger') {
+      ctx.fillStyle = hairColor;
+      ctx.fillRect(headX + p, eyeRow - Math.floor(p / 2), p, Math.floor(p / 2));
+      ctx.fillRect(headX + headW - 3 * p, eyeRow - Math.floor(p / 2), p, Math.floor(p / 2));
+    }
+
     // Mouth
     ctx.fillStyle = skinShadow;
-    ctx.fillRect(cx - p, headY + headH - 2 * p, 2 * p, Math.floor(p / 2));
+    if (this.characterId === 'dodger') {
+      // Fenley: smaller/rounder mouth (1p wide)
+      ctx.fillRect(cx - Math.floor(p / 2), headY + headH - 2 * p, p, Math.floor(p / 2));
+    } else {
+      ctx.fillRect(cx - p, headY + headH - 2 * p, 2 * p, Math.floor(p / 2));
+    }
   }
 
   // ════════════════════════════════════════════
@@ -433,6 +456,15 @@ export class Survivor extends Character {
     // Side hair extends down slightly
     ctx.fillRect(headX, headY + p, p, headH - p);
     ctx.fillRect(headX + headW - p, headY + p, p, headH - p);
+    if (this.characterId === 'dodger') {
+      // Fenley: longer side hair extends further down
+      ctx.fillRect(headX, headY + headH, p, p);
+      ctx.fillRect(headX + headW - p, headY + headH, p, p);
+      // Ponytail visible on back (center-right, extends down)
+      ctx.fillRect(cx, headY + headH, p, 2 * p);
+      ctx.fillStyle = hairDark;
+      ctx.fillRect(cx, headY + headH + p, p, p);
+    }
     // Neck (tiny sliver at bottom)
     ctx.fillStyle = skinShadow;
     ctx.fillRect(cx - p, headY + headH, 2 * p, Math.floor(p / 2));
@@ -566,8 +598,20 @@ export class Survivor extends Character {
     // Hair on back side of head
     if (facingRight) {
       ctx.fillRect(headX, headY, p, headH - p);
+      if (this.characterId === 'dodger') {
+        // Fenley: ponytail extends behind the head (left side when facing right)
+        ctx.fillRect(headX - p, headY + p, p, 2 * p);
+        // Longer hair tuft on back side
+        ctx.fillRect(headX, headY + headH - p, p, p);
+      }
     } else {
       ctx.fillRect(headX + headW - p, headY, p, headH - p);
+      if (this.characterId === 'dodger') {
+        // Fenley: ponytail extends behind the head (right side when facing left)
+        ctx.fillRect(headX + headW, headY + p, p, 2 * p);
+        // Longer hair tuft on back side
+        ctx.fillRect(headX + headW - p, headY + headH - p, p, p);
+      }
     }
 
     // Ear (on back side, visible in profile)
@@ -594,11 +638,21 @@ export class Survivor extends Character {
       // Pupil (facing forward in profile)
       ctx.fillStyle = '#000';
       ctx.fillRect(headX + headW - p, eyeRow, p, p);
+      // Eyelash for Fenley
+      if (this.characterId === 'dodger') {
+        ctx.fillStyle = hairColor;
+        ctx.fillRect(headX + headW - 2 * p, eyeRow - Math.floor(p / 2), p, Math.floor(p / 2));
+      }
     } else {
       ctx.fillRect(headX, eyeRow, 2 * p, p);
       // Pupil
       ctx.fillStyle = '#000';
       ctx.fillRect(headX, eyeRow, p, p);
+      // Eyelash for Fenley
+      if (this.characterId === 'dodger') {
+        ctx.fillStyle = hairColor;
+        ctx.fillRect(headX + p, eyeRow - Math.floor(p / 2), p, Math.floor(p / 2));
+      }
     }
 
     // Mouth (small, on facing side)
