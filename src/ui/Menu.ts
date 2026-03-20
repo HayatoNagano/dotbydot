@@ -3,6 +3,7 @@ import { CANVAS_WIDTH, CANVAS_HEIGHT } from '../constants';
 import { audioManager } from '../audio/AudioManager';
 import { renderPixelTitle } from '../rendering/PixelTitle';
 import { renderCampfireScene } from '../rendering/CampfireScene';
+import { resetStoryScene, updateStoryScene, renderStoryScene } from '../rendering/StoryScene';
 import { Survivor } from '../entities/Survivor';
 import { Killer } from '../entities/Killer';
 import { Direction } from '../types';
@@ -15,6 +16,7 @@ export enum MenuState {
   KillerSelect = 'killer_select',
   Playing = 'playing',
   Controls = 'controls',
+  Story = 'story',
   // Online states
   OnlineLobby = 'online_lobby',
   OnlineWaiting = 'online_waiting',
@@ -106,7 +108,7 @@ export class Menu {
         break;
 
       case MenuState.ModeSelect: {
-        const modeCount = 3;
+        const modeCount = 4;
         if (input.wasPressed('ArrowUp') || input.wasPressed('KeyW')) {
           this.cursorIndex = (this.cursorIndex + modeCount - 1) % modeCount;
           audioManager.playMenuMove();
@@ -123,6 +125,9 @@ export class Menu {
             this.mode = GameMode.Online;
             this.state = MenuState.OnlineLobby;
             this.onlineError = null;
+          } else if (this.cursorIndex === 2) {
+            this.state = MenuState.Story;
+            resetStoryScene();
           } else {
             this.state = MenuState.Controls;
           }
@@ -134,6 +139,15 @@ export class Menu {
 
       case MenuState.Controls:
         if (input.wasPressed('Escape') || input.wasPressed('Space') || input.wasPressed('Enter')) {
+          this.state = MenuState.ModeSelect;
+          this.cursorIndex = 3;
+          audioManager.playMenuMove();
+        }
+        break;
+
+      case MenuState.Story:
+        updateStoryScene(1 / 60);
+        if (input.wasPressed('Escape')) {
           this.state = MenuState.ModeSelect;
           this.cursorIndex = 2;
           audioManager.playMenuMove();
@@ -380,6 +394,9 @@ export class Menu {
       case MenuState.Controls:
         this.renderControls(ctx);
         break;
+      case MenuState.Story:
+        renderStoryScene(ctx);
+        break;
       case MenuState.RoleSelect:
         this.renderRoleSelect(ctx);
         break;
@@ -508,10 +525,11 @@ export class Menu {
     const options = [
       { label: 'CPU 対戦', desc: 'CPUと1対1で対戦' },
       { label: 'オンライン対戦', desc: '他のプレイヤーとオンラインで対戦' },
+      { label: 'ストーリー', desc: 'ドットの世界の物語を見る' },
       { label: '操作方法', desc: 'ゲームの操作方法を確認' },
     ];
     for (let i = 0; i < options.length; i++) {
-      const y = 220 + i * 80;
+      const y = 200 + i * 70;
       ctx.fillStyle = i === this.cursorIndex ? '#ff2244' : '#666';
       ctx.font = '20px monospace';
       ctx.fillText(options[i].label, CANVAS_WIDTH / 2, y);
