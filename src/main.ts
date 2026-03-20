@@ -44,6 +44,9 @@ menu.onCreateRoom = async () => {
       if (msg.type === 'opponent_joined') {
         menu.opponentJoined = true;
       }
+      if (msg.type === 'relay' && msg.data?.type === 'char_select') {
+        menu.opponentCharDefId = msg.data.defId;
+      }
       if (msg.type === 'error') {
         menu.onlineError = msg.message;
       }
@@ -68,6 +71,9 @@ menu.onJoinRoom = async (code: string) => {
         menu.opponentJoined = true;
         menu.roomCode = code;
       }
+      if (msg.type === 'relay' && msg.data?.type === 'char_select') {
+        menu.opponentCharDefId = msg.data.defId;
+      }
       if (msg.type === 'error') {
         menu.onlineError = msg.message;
         menu.state = MenuState.OnlineJoinInput;
@@ -80,6 +86,13 @@ menu.onJoinRoom = async (code: string) => {
   } catch {
     menu.onlineError = 'サーバーに接続できません';
     menu.state = MenuState.OnlineJoinInput;
+  }
+};
+
+// Send char_select via relay
+menu.onCharSelect = (defId: string) => {
+  if (netClient) {
+    netClient.relay({ type: 'char_select', defId });
   }
 };
 
@@ -96,6 +109,7 @@ function cleanupOnline(): void {
   menu.onlineRole = null;
   menu.roomCode = '';
   menu.onlineError = null;
+  menu.opponentCharDefId = null;
 }
 
 function returnToMenu(): void {
