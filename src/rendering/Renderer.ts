@@ -152,12 +152,21 @@ export class Renderer {
     const isKillerView = view.character === killer;
 
     for (const gen of objects.generators) {
-      if (!fog.isVisible(gen.tileX, gen.tileY)) continue;
+      // Show completed generators to killer for 3 seconds after completion
+      if (!fog.isVisible(gen.tileX, gen.tileY)) {
+        if (!(isKillerView && gen.completionRevealTimer > 0)) continue;
+      }
       gen.render(ctx, gen.pos.x - camera.x, gen.pos.y - camera.y);
     }
 
     for (const hook of objects.hooks) {
-      if (!fog.isVisible(hook.tileX, hook.tileY)) continue;
+      // When killer is carrying, show nearby hooks even through fog
+      if (!fog.isVisible(hook.tileX, hook.tileY)) {
+        if (!(isKillerView && killer.isCarrying)) continue;
+        const dx = hook.centerX - killer.centerX;
+        const dy = hook.centerY - killer.centerY;
+        if (dx * dx + dy * dy > (TILE_SIZE * 10) * (TILE_SIZE * 10)) continue;
+      }
       hook.render(ctx, hook.pos.x - camera.x, hook.pos.y - camera.y);
     }
 

@@ -1,5 +1,6 @@
 import { Character } from './Character';
 import { Survivor } from './Survivor';
+import { TileMap } from '../world/TileMap';
 import { HealthState } from '../types';
 import { KILLER_BASE_SPEED, COLOR_KILLER, TILE_SIZE } from '../constants';
 
@@ -68,19 +69,52 @@ export class Killer extends Character {
     return false;
   }
 
-  dropSurvivor(): void {
+  dropSurvivor(map?: TileMap): void {
     if (this.carrying) {
       this.carrying.isBeingCarried = false;
-      this.carrying.pos.x = this.pos.x;
-      this.carrying.pos.y = this.pos.y + TILE_SIZE;
+
+      // Try to place survivor in a walkable position nearby
+      const directions = [
+        { dx: 0, dy: TILE_SIZE },   // below
+        { dx: 0, dy: -TILE_SIZE },  // above
+        { dx: -TILE_SIZE, dy: 0 },  // left
+        { dx: TILE_SIZE, dy: 0 },   // right
+      ];
+
+      let placed = false;
+      if (map) {
+        for (const dir of directions) {
+          const nx = this.pos.x + dir.dx;
+          const ny = this.pos.y + dir.dy;
+          const tileX = Math.floor(nx / TILE_SIZE);
+          const tileY = Math.floor(ny / TILE_SIZE);
+          if (map.isWalkable(tileX, tileY)) {
+            this.carrying.pos.x = nx;
+            this.carrying.pos.y = ny;
+            placed = true;
+            break;
+          }
+        }
+      }
+
+      if (!placed) {
+        // Fallback: place at killer's position
+        this.carrying.pos.x = this.pos.x;
+        this.carrying.pos.y = this.pos.y;
+      }
+
+      // Sync prevPos to prevent lerp interpolation from drawing at old position
+      this.carrying.prevX = this.carrying.pos.x;
+      this.carrying.prevY = this.carrying.pos.y;
+
       this.carrying = null;
       this.speed = KILLER_BASE_SPEED;
     }
   }
 
-  applyStun(): void {
+  applyStun(map?: TileMap): void {
     this.stunTimer = Killer.STUN_DURATION;
-    this.dropSurvivor();
+    this.dropSurvivor(map);
   }
 
   render(ctx: CanvasRenderingContext2D, screenX: number, screenY: number): void {

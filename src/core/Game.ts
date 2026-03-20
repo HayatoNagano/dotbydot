@@ -485,7 +485,7 @@ export class Game {
               pallet.drop();
               audioManager.playPalletDrop();
               if (killerNear) {
-                this.killer.applyStun();
+                this.killer.applyStun(this.map);
                 audioManager.playStun();
               }
               break;
@@ -516,7 +516,7 @@ export class Game {
             break;
           }
         }
-        if (!hooked) this.killer.dropSurvivor();
+        if (!hooked) this.killer.dropSurvivor(this.map);
       } else if (this.killer.canAttack) {
         // Check dead hard invincibility
         let immune = false;
@@ -576,6 +576,9 @@ export class Game {
     if (this.killer.carrying) {
       this.killer.carrying.pos.x = this.killer.pos.x;
       this.killer.carrying.pos.y = this.killer.pos.y - 4;
+      // Keep prevPos in sync so lerp works correctly after drop
+      this.killer.carrying.prevX = this.killer.carrying.pos.x;
+      this.killer.carrying.prevY = this.killer.carrying.pos.y;
     }
 
     // Update abilities
@@ -613,6 +616,11 @@ export class Game {
     // Timers
     this.killer.updateTimers(dt);
     this.skillCheck.update(dt);
+
+    // Generator completion reveal timer
+    for (const gen of this.generators) {
+      if (gen.completionRevealTimer > 0) gen.completionRevealTimer -= dt;
+    }
 
     for (const hook of this.hooks) hook.update(dt);
 

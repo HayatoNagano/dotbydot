@@ -6,6 +6,8 @@ export class Generator extends Entity {
   progress = 0; // 0..1
   completed = false;
   beingRepaired = false;
+  /** Timer for killer vision after completion (seconds remaining) */
+  completionRevealTimer = 0;
 
   constructor(tileX: number, tileY: number) {
     super(tileX * TILE_SIZE, tileY * TILE_SIZE, TILE_SIZE, TILE_SIZE);
@@ -26,6 +28,7 @@ export class Generator extends Entity {
     if (this.progress >= 1) {
       this.progress = 1;
       this.completed = true;
+      this.completionRevealTimer = 3;
       eventBus.emit('generator_completed', this);
     }
   }
