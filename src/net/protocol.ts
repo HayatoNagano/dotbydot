@@ -39,6 +39,9 @@ export interface NetState {
   gatesPowered: boolean;
   inChase: boolean;
   terrorIntensity: number;
+  // Character IDs (e.g. 'runner'/'dodger', 'trapper'/'huntress')
+  sId: string;
+  kId: string;
   // Survivor [x, y, prevX, prevY, health(0-3), dir(0-3), moving, walking, animTime]
   s: number[];
   // Killer [x, y, prevX, prevY, dir(0-3), moving, walking, stunTime, atkCooldown, carrying, animTime]

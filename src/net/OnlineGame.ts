@@ -16,6 +16,8 @@ import { MenuSelection } from '../ui/Menu';
 import { HealthState, GamePhase, Direction } from '../types';
 import { TrapAbility } from '../abilities/TrapAbility';
 import { ThrowAxe } from '../abilities/ThrowAxe';
+import { Trap } from '../entities/Trap';
+import { Axe } from '../entities/Axe';
 import { audioManager } from '../audio/AudioManager';
 
 const STATE_SEND_INTERVAL = 1 / 15; // 15Hz state updates
@@ -35,7 +37,6 @@ export class OnlineGame {
   // Track pressed state for guest (convert held→pressed)
   private guestPrevInteract = false;
   private guestPrevAbility = false;
-  private guestPrevSpace = false;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -125,10 +126,12 @@ export class OnlineGame {
     input.injectKey('ShiftRight', g.walk);
 
     // Interact (Period in 2P killer mode)
-    const interactPressed = g.interact && !this.guestPrevInteract;
-    input.injectKey('Period', g.interact);
+    // Use interactHeld for isDown state (needed for generator kick hold)
+    // Detect press edge from interactHeld transition (false→true)
+    input.injectKey('Period', g.interactHeld);
+    const interactPressed = g.interactHeld && !this.guestPrevInteract;
     if (interactPressed) input.injectPressed('Period');
-    this.guestPrevInteract = g.interact;
+    this.guestPrevInteract = g.interactHeld;
 
     // Ability (Comma in 2P killer mode)
     const abilityPressed = g.ability && !this.guestPrevAbility;
@@ -172,6 +175,8 @@ export class OnlineGame {
       gatesPowered: g.gatesPowered,
       inChase: g.inChase,
       terrorIntensity: 0, // computed on guest side
+      sId: s.characterId,
+      kId: k.characterId,
       s: [
         s.pos.x, s.pos.y, s.prevX, s.prevY,
         healthToNum(s.health), dirToNum(s.direction),
@@ -182,7 +187,7 @@ export class OnlineGame {
         dirToNum(k.direction), k.isMoving ? 1 : 0, k.walking ? 1 : 0,
         k.stunTimer, k.attackCooldown, k.isCarrying ? 1 : 0, k.animTime,
       ],
-      g: g.generators.map((gen) => [gen.progress, gen.completed ? 1 : 0, gen.beingRepaired ? 1 : 0]),
+      g: g.generators.map((gen) => [gen.progress, gen.completed ? 1 : 0, gen.beingRepaired ? 1 : 0, gen.regressing ? 1 : 0]),
       h: g.hooks.map((h) => [h.hooked ? 1 : 0, h.stage, h.stageTimer, h.canSelfUnhook ? 1 : 0]),
       p: g.pallets.map((p) => [p.dropped ? 1 : 0, p.isDestroyed ? 1 : 0, p.pos.x, p.pos.y, p.width, p.height]),
       gt: g.exitGates.map((gt) => [gt.powered ? 1 : 0, gt.isOpen ? 1 : 0, gt.openProgress]),
@@ -226,6 +231,10 @@ export class OnlineGame {
       audioManager.stopChase();
     }
 
+    // Character IDs
+    if (state.sId) s.characterId = state.sId;
+    if (state.kId) k.characterId = state.kId;
+
     // Survivor
     const sd = state.s;
     s.pos.x = sd[0]; s.pos.y = sd[1];
@@ -254,6 +263,7 @@ export class OnlineGame {
         g.generators[i].progress = gd[0];
         g.generators[i].completed = gd[1] === 1;
         g.generators[i].beingRepaired = gd[2] === 1;
+        g.generators[i].regressing = (gd[3] ?? 0) === 1;
       }
     });
 
@@ -290,6 +300,40 @@ export class OnlineGame {
         g.exitGates[i].openProgress = gtd[2];
       }
     });
+
+    // Traps — sync trapAbility.traps array from state
+    const trapAbility = g.killerAbility instanceof TrapAbility ? g.killerAbility as TrapAbility : null;
+    if (trapAbility) {
+      // Resize traps array to match state
+      while (trapAbility.traps.length < state.tr.length) {
+        trapAbility.traps.push(new Trap(0, 0));
+      }
+      while (trapAbility.traps.length > state.tr.length) {
+        trapAbility.traps.pop();
+      }
+      state.tr.forEach((td, i) => {
+        trapAbility.traps[i].pos.x = td[0];
+        trapAbility.traps[i].pos.y = td[1];
+        trapAbility.traps[i].armed = td[2] === 1;
+        trapAbility.traps[i].trapped = td[3] === 1 ? s : null;
+      });
+    }
+
+    // Axes — sync throwAxe.axes array from state
+    const throwAxeAbility = g.killerAbility instanceof ThrowAxe ? g.killerAbility as ThrowAxe : null;
+    if (throwAxeAbility) {
+      while (throwAxeAbility.axes.length < state.ax.length) {
+        throwAxeAbility.axes.push(new Axe(0, 0, Direction.Down));
+      }
+      while (throwAxeAbility.axes.length > state.ax.length) {
+        throwAxeAbility.axes.pop();
+      }
+      state.ax.forEach((ad, i) => {
+        throwAxeAbility.axes[i].pos.x = ad[0];
+        throwAxeAbility.axes[i].pos.y = ad[1];
+        throwAxeAbility.axes[i].alive = ad[2] === 1;
+      });
+    }
 
     // Fog update for the guest's character (killer)
     g.killerFog.update(k.centerX, k.centerY);
