@@ -433,6 +433,142 @@ export class AudioManager {
     osc2.stop(now + 0.3);
   }
 
+  /** Survivor scream when hooked */
+  playHookScream(): void {
+    if (!this.ready) return;
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+
+    // Main scream — high-pitched voice using formant-like oscillators
+    const fundamentalFreqs = [800, 1100, 900, 700];
+    const durations = [0.25, 0.35, 0.2, 0.15];
+    let offset = 0;
+
+    for (let i = 0; i < fundamentalFreqs.length; i++) {
+      const freq = fundamentalFreqs[i];
+      const dur = durations[i];
+
+      // Voice formant 1
+      const osc1 = ctx.createOscillator();
+      osc1.type = 'sawtooth';
+      osc1.frequency.setValueAtTime(freq, now + offset);
+      osc1.frequency.setValueAtTime(freq * 1.1, now + offset + dur * 0.3);
+      osc1.frequency.exponentialRampToValueAtTime(freq * 0.7, now + offset + dur);
+
+      // Voice formant 2 (higher harmonic)
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'sawtooth';
+      osc2.frequency.setValueAtTime(freq * 2.2, now + offset);
+      osc2.frequency.exponentialRampToValueAtTime(freq * 1.5, now + offset + dur);
+
+      // Bandpass filter for voice quality
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(freq * 1.5, now + offset);
+      filter.Q.setValueAtTime(3, now + offset);
+
+      const gain = ctx.createGain();
+      const vol = i === 1 ? 0.18 : 0.12; // loudest on second syllable
+      gain.gain.setValueAtTime(0, now + offset);
+      gain.gain.linearRampToValueAtTime(vol, now + offset + 0.02);
+      gain.gain.setValueAtTime(vol, now + offset + dur * 0.5);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + offset + dur);
+
+      osc1.connect(filter);
+      osc2.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.master);
+
+      osc1.start(now + offset);
+      osc1.stop(now + offset + dur);
+      osc2.start(now + offset);
+      osc2.stop(now + offset + dur);
+
+      offset += dur * 0.8; // slight overlap
+    }
+
+    // Breath/noise layer for realism
+    const noiseLen = 0.7;
+    const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * noiseLen, ctx.sampleRate);
+    const noiseData = noiseBuf.getChannelData(0);
+    for (let i = 0; i < noiseData.length; i++) {
+      noiseData[i] = (Math.random() * 2 - 1) * 0.5;
+    }
+    const noiseSrc = ctx.createBufferSource();
+    noiseSrc.buffer = noiseBuf;
+    const noiseFilter = ctx.createBiquadFilter();
+    noiseFilter.type = 'bandpass';
+    noiseFilter.frequency.setValueAtTime(2000, now);
+    noiseFilter.Q.setValueAtTime(2, now);
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0, now);
+    noiseGain.gain.linearRampToValueAtTime(0.06, now + 0.05);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + noiseLen);
+    noiseSrc.connect(noiseFilter);
+    noiseFilter.connect(noiseGain);
+    noiseGain.connect(this.master);
+    noiseSrc.start(now);
+    noiseSrc.stop(now + noiseLen);
+  }
+
+  /** Generator kick — metallic stomping "gashi gashi" */
+  playGeneratorKick(): void {
+    if (!this.ready) return;
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+
+    // Two kicks in rapid succession for "ガシガシ" feel
+    for (let k = 0; k < 2; k++) {
+      const t = now + k * 0.25;
+
+      // Low impact thud
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(100, t);
+      osc.frequency.exponentialRampToValueAtTime(40, t + 0.12);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.35, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+      osc.connect(gain);
+      gain.connect(this.master);
+      osc.start(t);
+      osc.stop(t + 0.15);
+
+      // Metallic clang
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'square';
+      osc2.frequency.setValueAtTime(600 + k * 200, t);
+      osc2.frequency.exponentialRampToValueAtTime(200, t + 0.08);
+      const g2 = ctx.createGain();
+      g2.gain.setValueAtTime(0.15, t);
+      g2.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+      osc2.connect(g2);
+      g2.connect(this.master);
+      osc2.start(t);
+      osc2.stop(t + 0.1);
+
+      // Noise burst for scraping/impact texture
+      const noiseBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.08), ctx.sampleRate);
+      const noiseData = noiseBuf.getChannelData(0);
+      for (let i = 0; i < noiseData.length; i++) {
+        noiseData[i] = (Math.random() * 2 - 1);
+      }
+      const noiseSrc = ctx.createBufferSource();
+      noiseSrc.buffer = noiseBuf;
+      const noiseFilter = ctx.createBiquadFilter();
+      noiseFilter.type = 'highpass';
+      noiseFilter.frequency.setValueAtTime(800, t);
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.12, t);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+      noiseSrc.connect(noiseFilter);
+      noiseFilter.connect(noiseGain);
+      noiseGain.connect(this.master);
+      noiseSrc.start(t);
+      noiseSrc.stop(t + 0.08);
+    }
+  }
+
   /** Trap trigger — snap */
   playTrapSnap(): void {
     if (!this.ready) return;

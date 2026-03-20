@@ -87,6 +87,10 @@ export class Game {
   readonly playerRole: PlayerRole;
   private killerAI: KillerAI | null = null;
   private survivorAI: SurvivorAI | null = null;
+  /** Timer for killer kicking a generator (1 second action) */
+  private kickingGen: Generator | null = null;
+  private kickTimer = 0;
+  private static readonly KICK_DURATION = 1.0;
 
   constructor(canvas: HTMLCanvasElement, input: Input, selection: MenuSelection) {
     this.selection = selection;
@@ -496,14 +500,55 @@ export class Game {
     }
 
     if (!this.isRepairing) {
-      for (const gen of this.generators) gen.idle();
+      for (const gen of this.generators) gen.idle(dt);
+    }
+
+    // Killer generator kick (hold interact near unkicked generator)
+    const killerInteractHeld = playingAsKiller
+      ? this.input.isDown('KeyE')
+      : this.input.isDown('Period');
+    if ((killerInteractHeld || killerInteract) && !this.killer.isCarrying && !this.killer.isStunned) {
+      if (!this.kickingGen) {
+        // Find nearby generator to kick
+        for (const gen of this.generators) {
+          if (!gen.completed && gen.progress > 0 && !gen.beingRepaired && !gen.regressing &&
+              CollisionSystem.distance(this.killer, gen) < TILE_SIZE * 1.5) {
+            this.kickingGen = gen;
+            this.kickTimer = 0;
+            break;
+          }
+        }
+      }
+      if (this.kickingGen) {
+        // Verify still in range and generator still valid
+        if (CollisionSystem.distance(this.killer, this.kickingGen) >= TILE_SIZE * 2 ||
+            this.kickingGen.completed || this.kickingGen.beingRepaired) {
+          this.kickingGen = null;
+          this.kickTimer = 0;
+        } else {
+          this.kickTimer += dt;
+          if (this.kickTimer >= Game.KICK_DURATION) {
+            this.kickingGen.kick();
+            audioManager.playGeneratorKick();
+            this.kickingGen = null;
+            this.kickTimer = 0;
+          }
+        }
+      }
+    } else {
+      this.kickingGen = null;
+      this.kickTimer = 0;
+    }
+    // Update kick progress on generators for HUD display
+    for (const gen of this.generators) {
+      gen.kickProgress = (gen === this.kickingGen) ? this.kickTimer / Game.KICK_DURATION : 0;
     }
 
     // Killer interact (E when playing as killer, Period in 2P, or AI)
     const killerInteractPressed = playingAsKiller
       ? this.input.wasPressed('KeyE')
       : this.input.wasPressed('Period');
-    if (killerInteractPressed || killerInteract) {
+    if ((killerInteractPressed || killerInteract) && !this.kickingGen) {
       if (this.killer.isCarrying) {
         let hooked = false;
         for (const hook of this.hooks) {
@@ -513,6 +558,7 @@ export class Game {
             this.killer.speed = KILLER_BASE_SPEED;
             hooked = true;
             audioManager.playHook();
+            audioManager.playHookScream();
             break;
           }
         }
@@ -566,7 +612,7 @@ export class Game {
       }
     }
 
-    if (!this.killer.isStunned) {
+    if (!this.killer.isStunned && !this.kickingGen) {
       const palletBlocker = (px: number, py: number, w: number, h: number) =>
         this.palletCollision(px, py, w, h);
       this.killer.move(kdx, kdy, dt, this.map, palletBlocker);
