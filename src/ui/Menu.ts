@@ -14,6 +14,7 @@ export enum MenuState {
   SurvivorSelect = 'survivor_select',
   KillerSelect = 'killer_select',
   Playing = 'playing',
+  Controls = 'controls',
   // Online states
   OnlineLobby = 'online_lobby',
   OnlineWaiting = 'online_waiting',
@@ -22,7 +23,6 @@ export enum MenuState {
 }
 
 export enum GameMode {
-  Local2P = 'local_2p',
   VsCPU = 'vs_cpu',
   Online = 'online',
 }
@@ -60,7 +60,7 @@ export interface MenuSelection {
 
 export class Menu {
   state: MenuState = MenuState.Title;
-  mode: GameMode = GameMode.Local2P;
+  mode: GameMode = GameMode.VsCPU;
   playerRole: PlayerRole = PlayerRole.Survivor;
   selectedSurvivor = 0;
   selectedKiller = 0;
@@ -112,21 +112,28 @@ export class Menu {
         }
         if (input.wasPressed('Space') || input.wasPressed('Enter')) {
           if (this.cursorIndex === 0) {
-            this.mode = GameMode.Local2P;
-            this.state = MenuState.RoleSelect;
-          } else if (this.cursorIndex === 1) {
             this.mode = GameMode.VsCPU;
             this.state = MenuState.RoleSelect;
-          } else {
+          } else if (this.cursorIndex === 1) {
             this.mode = GameMode.Online;
             this.state = MenuState.OnlineLobby;
             this.onlineError = null;
+          } else {
+            this.state = MenuState.Controls;
           }
           this.cursorIndex = 0;
           audioManager.playMenuSelect();
         }
         break;
       }
+
+      case MenuState.Controls:
+        if (input.wasPressed('Escape') || input.wasPressed('Space') || input.wasPressed('Enter')) {
+          this.state = MenuState.ModeSelect;
+          this.cursorIndex = 2;
+          audioManager.playMenuMove();
+        }
+        break;
 
       case MenuState.OnlineLobby:
         if (input.wasPressed('ArrowUp') || input.wasPressed('KeyW') ||
@@ -203,7 +210,8 @@ export class Menu {
         }
         if (input.wasPressed('Space') || input.wasPressed('Enter')) {
           this.playerRole = this.cursorIndex === 0 ? PlayerRole.Survivor : PlayerRole.Killer;
-          this.state = MenuState.SurvivorSelect;
+          // CPU対戦: 自分のロールのキャラだけ選択、相手はランダム
+          this.state = this.playerRole === PlayerRole.Survivor ? MenuState.SurvivorSelect : MenuState.KillerSelect;
           this.cursorIndex = 0;
           audioManager.playMenuSelect();
         }
@@ -225,6 +233,18 @@ export class Menu {
         }
         if (input.wasPressed('Space') || input.wasPressed('Enter')) {
           this.selectedSurvivor = this.cursorIndex;
+          if (this.mode === GameMode.VsCPU) {
+            // CPU対戦: キラーはランダム
+            this.selectedKiller = Math.floor(Math.random() * KILLER_DEFS.length);
+            this.state = MenuState.Playing;
+            audioManager.playMenuSelect();
+            return {
+              mode: this.mode,
+              playerRole: this.playerRole,
+              survivorDef: SURVIVOR_DEFS[this.selectedSurvivor],
+              killerDef: KILLER_DEFS[this.selectedKiller],
+            };
+          }
           if (this.mode === GameMode.Online) {
             // Online host: survivor selected → start game (killer is default for guest)
             this.selectedKiller = 0;
@@ -245,7 +265,7 @@ export class Menu {
           if (this.mode === GameMode.Online) {
             this.state = MenuState.OnlineLobby;
           } else {
-            this.state = this.mode === GameMode.VsCPU ? MenuState.RoleSelect : MenuState.ModeSelect;
+            this.state = MenuState.RoleSelect;
           }
           this.cursorIndex = 0;
           audioManager.playMenuMove();
@@ -263,6 +283,10 @@ export class Menu {
         }
         if (input.wasPressed('Space') || input.wasPressed('Enter')) {
           this.selectedKiller = this.cursorIndex;
+          if (this.mode === GameMode.VsCPU) {
+            // CPU対戦: サバイバーはランダム
+            this.selectedSurvivor = Math.floor(Math.random() * SURVIVOR_DEFS.length);
+          }
           if (this.mode === GameMode.Online) {
             // Online guest: killer selected → start game (survivor is default for host)
             this.selectedSurvivor = 0;
@@ -280,7 +304,7 @@ export class Menu {
           if (this.mode === GameMode.Online) {
             this.state = MenuState.OnlineLobby;
           } else {
-            this.state = MenuState.SurvivorSelect;
+            this.state = MenuState.RoleSelect;
           }
           this.cursorIndex = 0;
           audioManager.playMenuMove();
@@ -300,6 +324,9 @@ export class Menu {
         break;
       case MenuState.ModeSelect:
         this.renderModeSelect(ctx);
+        break;
+      case MenuState.Controls:
+        this.renderControls(ctx);
         break;
       case MenuState.RoleSelect:
         this.renderRoleSelect(ctx);
@@ -423,14 +450,23 @@ export class Menu {
     ctx.font = 'bold 24px monospace';
     ctx.fillText('モード選択', CANVAS_WIDTH / 2, 150);
 
-    const options = ['ローカル 2人対戦', 'CPU 対戦', 'オンライン対戦'];
+    const options = [
+      { label: 'CPU 対戦', desc: 'CPUと1対1で対戦' },
+      { label: 'オンライン対戦', desc: '他のプレイヤーとオンラインで対戦' },
+      { label: '操作方法', desc: 'ゲームの操作方法を確認' },
+    ];
     for (let i = 0; i < options.length; i++) {
-      const y = 240 + i * 70;
+      const y = 220 + i * 80;
       ctx.fillStyle = i === this.cursorIndex ? '#ff2244' : '#666';
       ctx.font = '20px monospace';
-      ctx.fillText(options[i], CANVAS_WIDTH / 2, y);
+      ctx.fillText(options[i].label, CANVAS_WIDTH / 2, y);
+      ctx.fillStyle = i === this.cursorIndex ? '#aaa' : '#444';
+      ctx.font = '11px monospace';
+      ctx.fillText(options[i].desc, CANVAS_WIDTH / 2, y + 25);
       if (i === this.cursorIndex) {
-        ctx.fillText('▶', CANVAS_WIDTH / 2 - 140, y);
+        ctx.fillStyle = '#ff2244';
+        ctx.font = '20px monospace';
+        ctx.fillText('▶', CANVAS_WIDTH / 2 - 160, y);
       }
     }
 
@@ -672,6 +708,101 @@ export class Menu {
     ctx.fillStyle = '#555';
     ctx.font = '12px monospace';
     ctx.fillText('ESC: キャンセル', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+    ctx.textAlign = 'left';
+  }
+
+  private renderControls(ctx: CanvasRenderingContext2D): void {
+    const CX = CANVAS_WIDTH / 2;
+    ctx.textAlign = 'center';
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 24px monospace';
+    ctx.fillText('操作方法', CX, 60);
+
+    // サバイバー操作
+    const leftX = CX - 160;
+    const rightX = CX + 160;
+
+    ctx.fillStyle = '#00ff88';
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText('サバイバー', leftX, 110);
+
+    ctx.font = '13px monospace';
+    const survivorControls = [
+      ['W A S D', '移動'],
+      ['Shift (左)', '歩き (静かに移動)'],
+      ['E', 'インタラクト'],
+      ['', '(修理 / 板倒し / ロッカー /'],
+      ['', ' ゲート開放 / フック脱出)'],
+      ['Q', '能力発動'],
+      ['Space', '自力脱出 (フック)'],
+    ];
+    for (let i = 0; i < survivorControls.length; i++) {
+      const y = 145 + i * 28;
+      const [key, desc] = survivorControls[i];
+      if (key) {
+        ctx.fillStyle = '#ffcc44';
+        ctx.fillText(key, leftX - 60, y);
+        ctx.fillStyle = '#bbb';
+        ctx.fillText(desc, leftX + 60, y);
+      } else {
+        ctx.fillStyle = '#bbb';
+        ctx.fillText(desc, leftX + 60, y);
+      }
+    }
+
+    // キラー操作
+    ctx.fillStyle = '#ff2244';
+    ctx.font = 'bold 18px monospace';
+    ctx.fillText('キラー', rightX, 110);
+
+    ctx.font = '13px monospace';
+    const killerControls = [
+      ['W A S D', '移動'],
+      ['Shift (左)', '歩き (静かに移動)'],
+      ['E', 'インタラクト'],
+      ['', '(攻撃 / 担ぎ / フック吊り /'],
+      ['', ' 板破壊 / ロッカー調査)'],
+      ['Q', '能力発動'],
+    ];
+    for (let i = 0; i < killerControls.length; i++) {
+      const y = 145 + i * 28;
+      const [key, desc] = killerControls[i];
+      if (key) {
+        ctx.fillStyle = '#ffcc44';
+        ctx.fillText(key, rightX - 60, y);
+        ctx.fillStyle = '#bbb';
+        ctx.fillText(desc, rightX + 60, y);
+      } else {
+        ctx.fillStyle = '#bbb';
+        ctx.fillText(desc, rightX + 60, y);
+      }
+    }
+
+    // ゲーム概要
+    ctx.fillStyle = '#888';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText('ゲームの流れ', CX, 380);
+
+    ctx.font = '12px monospace';
+    ctx.fillStyle = '#aaa';
+    const rules = [
+      'サバイバー: 発電機を修理してゲートを通電し、脱出を目指す',
+      'キラー: サバイバーを2回攻撃して瀕死にし、フックに吊って処刑する',
+      '',
+      '・発電機を規定数修理するとゲートが通電する',
+      '・通電後、ゲートをインタラクトで開けて脱出すればサバイバーの勝利',
+      '・サバイバーをフックに3回吊れば処刑完了でキラーの勝利',
+      '・板を倒すとキラーの進路を塞げる (近くにいるとスタン効果)',
+      '・ロッカーに隠れてキラーをやり過ごすことも可能',
+    ];
+    for (let i = 0; i < rules.length; i++) {
+      ctx.fillText(rules[i], CX, 410 + i * 22);
+    }
+
+    ctx.fillStyle = '#555';
+    ctx.font = '12px monospace';
+    ctx.fillText('ESC / SPACE: 戻る', CX, CANVAS_HEIGHT - 40);
     ctx.textAlign = 'left';
   }
 
