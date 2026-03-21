@@ -64,7 +64,7 @@ export class Renderer {
     objects: WorldObjects,
     scratchMarks: ScratchMarks,
     killer: Killer,
-    survivor: Survivor,
+    survivors: Survivor[],
     alpha: number,
   ): void {
     const ctx = this.ctx;
@@ -234,11 +234,12 @@ export class Renderer {
       }
     }
 
-    // Terror radius (survivor view)
+    // Terror radius (survivor view) — use the view's character (player survivor)
     if (!isKillerView) {
+      const viewSurvivor = view.character as Survivor;
       const intensity = TerrorRadius.getIntensity(
         killer.centerX, killer.centerY,
-        survivor.centerX, survivor.centerY,
+        viewSurvivor.centerX, viewSurvivor.centerY,
       );
       TerrorRadius.renderEffect(ctx, intensity, width, height);
     }
@@ -252,7 +253,7 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** Render skill check inside the viewport (part of gameplay) */
+  /** Render skill check inside the viewport */
   renderSkillCheck(view: RenderView, skillCheck: SkillCheck, killer: Killer): void {
     if (view.character === killer) return;
     const ctx = this.ctx;

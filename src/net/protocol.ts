@@ -1,19 +1,22 @@
 /**
  * Network protocol message types for online multiplayer.
  *
- * Architecture: Host runs the Game simulation. Guest sends inputs, receives state.
- * The relay server just forwards messages between host and guest.
+ * Architecture: Host (killer) runs the Game simulation.
+ * Guests (survivors) send inputs, receive state.
+ * The relay server forwards messages between host and guests.
  */
 
 // ─── Relay payload types (sent inside { type: 'relay', data: ... }) ───
 
-/** Host → Guest: Game initialization (same seed = same map) */
+/** Host → Guests: Game initialization (same seed = same map) */
 export interface NetGameStart {
   type: 'game_start';
   seed: number;
   survivorDef: string; // ability id
+  survivor2Def: string;
   killerDef: string;
   survivorColor: string;
+  survivor2Color: string;
   killerColor: string;
 }
 
@@ -29,7 +32,7 @@ export interface NetInput {
   space: boolean; // skill check / self-unhook
 }
 
-/** Host → Guest: Compact game state snapshot (sent at ~15Hz) */
+/** Host → Guests: Compact game state snapshot (sent at ~30Hz) */
 export interface NetState {
   type: 'state';
   tick: number;
@@ -41,9 +44,12 @@ export interface NetState {
   terrorIntensity: number;
   // Character IDs (e.g. 'runner'/'dodger', 'trapper'/'huntress')
   sId: string;
+  s2Id: string;
   kId: string;
-  // Survivor [x, y, prevX, prevY, health(0-3), dir(0-3), moving, walking, animTime]
+  // Survivor1 [x, y, prevX, prevY, health(0-3), dir(0-3), moving, walking, animTime]
   s: number[];
+  // Survivor2 [x, y, prevX, prevY, health(0-3), dir(0-3), moving, walking, animTime]
+  s2: number[];
   // Killer [x, y, prevX, prevY, dir(0-3), moving, walking, stunTime, atkCooldown, carrying, animTime]
   k: number[];
   // Generators: [progress, completed(0/1), repairing(0/1)][]
@@ -60,10 +66,12 @@ export interface NetState {
   ax: number[][];
   // Scratch marks: [x, y, alpha][]
   sm: number[][];
-  // Skill check (for survivor guest)
-  sc: { active: boolean; angle: number; ts: number; te: number; gs: number; ge: number } | null;
+  // Skill check per survivor
+  sc: { active: boolean; angle: number; ts: number; te: number; gs: number; ge: number; result?: string } | null;
+  sc2: { active: boolean; angle: number; ts: number; te: number; gs: number; ge: number; result?: string } | null;
   // Ability cooldowns [cooldownRemaining, isActive(0/1)]
   sa: number[];
+  s2a: number[];
   ka: number[];
 }
 
@@ -73,7 +81,7 @@ export interface NetSound {
   name: string;
 }
 
-/** Host → Guest: Character selection options */
+/** Host → Guests: Character selection options */
 export interface NetCharSelect {
   type: 'char_select';
   defId: string;
@@ -84,7 +92,12 @@ export interface NetReady {
   type: 'ready';
 }
 
-export type NetMessage = NetGameStart | NetInput | NetState | NetSound | NetCharSelect | NetReady;
+/** Host → Guests: Signal to start the game */
+export interface NetStartGame {
+  type: 'start_game';
+}
+
+export type NetMessage = NetGameStart | NetInput | NetState | NetSound | NetCharSelect | NetReady | NetStartGame;
 
 // ─── Helpers ───
 

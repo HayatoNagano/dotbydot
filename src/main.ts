@@ -41,18 +41,22 @@ menu.onCreateRoom = async () => {
       if (msg.type === 'room_created') {
         menu.roomCode = msg.code;
       }
-      if (msg.type === 'opponent_joined') {
-        menu.opponentJoined = true;
+      if (msg.type === 'player_joined') {
+        menu.playerCount = msg.playerCount;
+      }
+      if (msg.type === 'player_left') {
+        menu.playerCount = msg.playerCount;
       }
       if (msg.type === 'relay' && msg.data?.type === 'char_select') {
+        // Guest selected their survivor character — not used for game start flow
+        // but store for reference
         menu.opponentCharDefId = msg.data.defId;
       }
       if (msg.type === 'error') {
         menu.onlineError = msg.message;
       }
       if (msg.type === 'opponent_left' && !game) {
-        menu.onlineError = '相手が切断しました';
-        menu.state = MenuState.OnlineLobby;
+        menu.onlineError = 'プレイヤーが切断しました';
       }
     });
   } catch {
@@ -70,22 +74,38 @@ menu.onJoinRoom = async (code: string) => {
       if (msg.type === 'joined') {
         menu.opponentJoined = true;
         menu.roomCode = code;
+        menu.guestIndex = (msg as { guestIndex?: number }).guestIndex ?? 0;
+      }
+      if (msg.type === 'player_count') {
+        menu.playerCount = msg.playerCount;
       }
       if (msg.type === 'relay' && msg.data?.type === 'char_select') {
+        // Host's killer character selection
         menu.opponentCharDefId = msg.data.defId;
+      }
+      if (msg.type === 'relay' && msg.data?.type === 'start_game') {
+        // Host started the game
+        menu.gameStarted = true;
       }
       if (msg.type === 'error') {
         menu.onlineError = msg.message;
         menu.state = MenuState.OnlineJoinInput;
       }
       if (msg.type === 'opponent_left' && !game) {
-        menu.onlineError = '相手が切断しました';
+        menu.onlineError = 'ホストが切断しました';
         menu.state = MenuState.OnlineLobby;
       }
     });
   } catch {
     menu.onlineError = 'サーバーに接続できません';
     menu.state = MenuState.OnlineJoinInput;
+  }
+};
+
+// Host starts the game — notify all guests
+menu.onStartGame = () => {
+  if (netClient) {
+    netClient.relay({ type: 'start_game' });
   }
 };
 
@@ -110,6 +130,9 @@ function cleanupOnline(): void {
   menu.roomCode = '';
   menu.onlineError = null;
   menu.opponentCharDefId = null;
+  menu.playerCount = 1;
+  menu.guestIndex = 0;
+  menu.gameStarted = false;
 }
 
 function returnToMenu(): void {
@@ -167,7 +190,8 @@ const loop = new GameLoop(
         if (selection.mode === GameMode.Online && netClient) {
           // Online game
           const isHost = menu.onlineRole === 'host';
-          onlineGame = new OnlineGame(canvas, input, selection, netClient, isHost);
+          const guestIndex = menu.guestIndex;
+          onlineGame = new OnlineGame(canvas, input, selection, netClient, isHost, guestIndex);
           game = onlineGame.game;
           audioManager.startAmbient();
         } else {

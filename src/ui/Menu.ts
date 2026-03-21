@@ -58,7 +58,14 @@ export interface MenuSelection {
   mode: GameMode;
   playerRole: PlayerRole;
   survivorDef: CharacterDef;
+  /** Second survivor (bot-controlled) */
+  survivor2Def: CharacterDef;
   killerDef: CharacterDef;
+}
+
+/** Pick the other survivor def (for the bot-controlled 2nd survivor) */
+function otherSurvivorDef(primary: CharacterDef): CharacterDef {
+  return SURVIVOR_DEFS.find((d) => d.id !== primary.id) || SURVIVOR_DEFS[0];
 }
 
 export class Menu {
@@ -81,12 +88,18 @@ export class Menu {
   roomCodeInput = '';
   onlineError: string | null = null;
   opponentJoined = false;
+  /** Current player count in room (set by main.ts from server messages) */
+  playerCount = 1;
+  /** Guest index assigned by server (0=survivor1, 1=survivor2) */
+  guestIndex = 0;
+  /** Whether host signaled game start */
+  gameStarted = false;
   /** Callback: called when user wants to create a room */
   onCreateRoom: (() => void) | null = null;
   /** Callback: called when user wants to join a room */
   onJoinRoom: ((code: string) => void) | null = null;
-  /** Callback: called when user starts the online game */
-  onOnlineStart: (() => void) | null = null;
+  /** Callback: called when host starts the game */
+  onStartGame: (() => void) | null = null;
   /** Callback: called when user selects their character in online mode */
   onCharSelect: ((defId: string) => void) | null = null;
   /** Set by main.ts when opponent's char_select is received */
@@ -162,18 +175,20 @@ export class Menu {
         }
         if (input.wasPressed('Space') || input.wasPressed('Enter')) {
           if (this.cursorIndex === 0) {
-            // Create room
+            // Create room — host is killer
             this.onlineRole = 'host';
-            this.playerRole = PlayerRole.Survivor;
-            this.state = MenuState.OnlineWaiting;
-            this.opponentJoined = false;
+            this.playerRole = PlayerRole.Killer;
+            this.state = MenuState.KillerSelect;
+            this.playerCount = 1;
+            this.gameStarted = false;
             this.onCreateRoom?.();
           } else {
-            // Join room
+            // Join room — guest is survivor
             this.state = MenuState.OnlineJoinInput;
             this.roomCodeInput = '';
             this.onlineError = null;
           }
+          this.cursorIndex = 0;
           audioManager.playMenuSelect();
         }
         if (input.wasPressed('Escape')) {
@@ -188,8 +203,9 @@ export class Menu {
         this.handleCodeInput(input);
         if (input.wasPressed('Enter') && this.roomCodeInput.length === 4) {
           this.onlineRole = 'guest';
-          this.playerRole = PlayerRole.Killer;
+          this.playerRole = PlayerRole.Survivor;
           this.onlineError = null;
+          this.gameStarted = false;
           this.onJoinRoom?.(this.roomCodeInput);
           this.state = MenuState.OnlineWaiting;
           audioManager.playMenuSelect();
@@ -202,13 +218,30 @@ export class Menu {
         break;
 
       case MenuState.OnlineWaiting:
-        if (this.opponentJoined && this.onlineRole === 'host') {
-          this.state = MenuState.SurvivorSelect;
-          this.cursorIndex = 0;
-        }
-        if (this.opponentJoined && this.onlineRole === 'guest') {
-          this.state = MenuState.KillerSelect;
-          this.cursorIndex = 0;
+        if (this.onlineRole === 'host') {
+          // Host waiting screen: show player count, SPACE to start
+          if (input.wasPressed('Space') || input.wasPressed('Enter')) {
+            // Start the game — host has already selected killer
+            this.onStartGame?.();
+            this.gameStarted = true;
+            const survivorDef = SURVIVOR_DEFS[0];
+            const survivor2Def = SURVIVOR_DEFS.length > 1 ? SURVIVOR_DEFS[1] : SURVIVOR_DEFS[0];
+            this.state = MenuState.Playing;
+            audioManager.playMenuSelect();
+            return {
+              mode: this.mode,
+              playerRole: this.playerRole,
+              survivorDef,
+              survivor2Def,
+              killerDef: KILLER_DEFS[this.selectedKiller],
+            };
+          }
+        } else if (this.onlineRole === 'guest') {
+          // Guest: waiting for join confirmation, then go to survivor select
+          if (this.opponentJoined) {
+            this.state = MenuState.SurvivorSelect;
+            this.cursorIndex = 0;
+          }
         }
         if (input.wasPressed('Escape')) {
           this.state = MenuState.OnlineLobby;
@@ -219,29 +252,21 @@ export class Menu {
         break;
 
       case MenuState.OnlineCharWait:
-        // Waiting for opponent's character selection
-        if (this.opponentCharDefId) {
-          if (this.onlineRole === 'host') {
-            const killerDef = KILLER_DEFS.find((d) => d.id === this.opponentCharDefId) || KILLER_DEFS[0];
-            this.state = MenuState.Playing;
-            audioManager.playMenuSelect();
-            return {
-              mode: this.mode,
-              playerRole: this.playerRole,
-              survivorDef: SURVIVOR_DEFS[this.selectedSurvivor],
-              killerDef,
-            };
-          } else {
-            const survivorDef = SURVIVOR_DEFS.find((d) => d.id === this.opponentCharDefId) || SURVIVOR_DEFS[0];
-            this.state = MenuState.Playing;
-            audioManager.playMenuSelect();
-            return {
-              mode: this.mode,
-              playerRole: this.playerRole,
-              survivorDef,
-              killerDef: KILLER_DEFS[this.selectedKiller],
-            };
-          }
+        // Guest waiting for host to start the game
+        if (this.gameStarted) {
+          const survivorDef = SURVIVOR_DEFS[this.selectedSurvivor];
+          const survivor2Def = otherSurvivorDef(survivorDef);
+          // killerDef comes from host's char_select
+          const killerDef = KILLER_DEFS.find((d) => d.id === this.opponentCharDefId) || KILLER_DEFS[0];
+          this.state = MenuState.Playing;
+          audioManager.playMenuSelect();
+          return {
+            mode: this.mode,
+            playerRole: this.playerRole,
+            survivorDef,
+            survivor2Def,
+            killerDef,
+          };
         }
         break;
 
@@ -288,22 +313,25 @@ export class Menu {
               mode: this.mode,
               playerRole: this.playerRole,
               survivorDef: SURVIVOR_DEFS[this.selectedSurvivor],
+              survivor2Def: otherSurvivorDef(SURVIVOR_DEFS[this.selectedSurvivor]),
               killerDef: KILLER_DEFS[this.selectedKiller],
             };
           }
           if (this.mode === GameMode.Online) {
-            // Online host: survivor selected → send to guest, wait for guest's killer
+            // Online guest: survivor selected → send to host, wait for game start
             this.onCharSelect?.(SURVIVOR_DEFS[this.selectedSurvivor].id);
             this.state = MenuState.OnlineCharWait;
             audioManager.playMenuSelect();
-            // Check if opponent already selected
-            if (this.opponentCharDefId) {
+            // If host already started, proceed immediately
+            if (this.gameStarted) {
+              const survivorDef = SURVIVOR_DEFS[this.selectedSurvivor];
               const killerDef = KILLER_DEFS.find((d) => d.id === this.opponentCharDefId) || KILLER_DEFS[0];
               this.state = MenuState.Playing;
               return {
                 mode: this.mode,
                 playerRole: this.playerRole,
-                survivorDef: SURVIVOR_DEFS[this.selectedSurvivor],
+                survivorDef,
+                survivor2Def: otherSurvivorDef(survivorDef),
                 killerDef,
               };
             }
@@ -340,21 +368,10 @@ export class Menu {
             this.selectedSurvivor = Math.floor(Math.random() * SURVIVOR_DEFS.length);
           }
           if (this.mode === GameMode.Online) {
-            // Online guest: killer selected → send to host, wait for host's survivor
+            // Online host: killer selected → send to guests, go to waiting room
             this.onCharSelect?.(KILLER_DEFS[this.selectedKiller].id);
-            this.state = MenuState.OnlineCharWait;
+            this.state = MenuState.OnlineWaiting;
             audioManager.playMenuSelect();
-            // Check if opponent already selected
-            if (this.opponentCharDefId) {
-              const survivorDef = SURVIVOR_DEFS.find((d) => d.id === this.opponentCharDefId) || SURVIVOR_DEFS[0];
-              this.state = MenuState.Playing;
-              return {
-                mode: this.mode,
-                playerRole: this.playerRole,
-                survivorDef,
-                killerDef: KILLER_DEFS[this.selectedKiller],
-              };
-            }
             break;
           }
           this.state = MenuState.Playing;
@@ -363,6 +380,7 @@ export class Menu {
             mode: this.mode,
             playerRole: this.playerRole,
             survivorDef: SURVIVOR_DEFS[this.selectedSurvivor],
+            survivor2Def: otherSurvivorDef(SURVIVOR_DEFS[this.selectedSurvivor]),
             killerDef: KILLER_DEFS[this.selectedKiller],
           };
         }
@@ -523,7 +541,7 @@ export class Menu {
     ctx.fillText('モード選択', CANVAS_WIDTH / 2, 150);
 
     const options = [
-      { label: 'CPU 対戦', desc: 'CPUと1対1で対戦' },
+      { label: 'CPU 対戦', desc: 'CPUと対戦' },
       { label: 'オンライン対戦', desc: '他のプレイヤーとオンラインで対戦' },
       { label: 'ストーリー', desc: 'ドットの世界の物語を見る' },
       { label: '操作方法', desc: 'ゲームの操作方法を確認' },
@@ -678,9 +696,9 @@ export class Menu {
 
     ctx.fillStyle = '#aaa';
     ctx.font = '13px monospace';
-    ctx.fillText('ホスト = サバイバー / ゲスト = キラー', CANVAS_WIDTH / 2, 190);
+    ctx.fillText('ホスト = キラー / ゲスト = サバイバー (最大2人)', CANVAS_WIDTH / 2, 190);
 
-    const options = ['部屋を作成 (ホスト)', '部屋に参加 (ゲスト)'];
+    const options = ['部屋を作成 (キラー)', '部屋に参加 (サバイバー)'];
     for (let i = 0; i < options.length; i++) {
       const y = 270 + i * 70;
       ctx.fillStyle = i === this.cursorIndex ? '#ff2244' : '#666';
@@ -745,55 +763,90 @@ export class Menu {
   }
 
   private renderOnlineWaiting(ctx: CanvasRenderingContext2D): void {
+    const CX = CANVAS_WIDTH / 2;
     ctx.textAlign = 'center';
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 24px monospace';
 
     if (this.onlineRole === 'host') {
-      ctx.fillText('部屋を作成しました', CANVAS_WIDTH / 2, 180);
+      ctx.fillText('対戦ルーム', CX, 130);
 
       // Room code
       ctx.fillStyle = '#ff8844';
       ctx.font = 'bold 56px monospace';
       ctx.letterSpacing = '16px';
-      ctx.fillText(this.roomCode, CANVAS_WIDTH / 2, 280);
+      ctx.fillText(this.roomCode, CX, 220);
       ctx.letterSpacing = '0px';
 
       ctx.fillStyle = '#aaa';
       ctx.font = '14px monospace';
-      ctx.fillText('このコードを相手に伝えてください', CANVAS_WIDTH / 2, 330);
+      ctx.fillText('このコードを相手に伝えてください', CX, 260);
 
-      // Waiting animation
-      const dots = '.'.repeat(Math.floor(Date.now() / 500) % 4);
-      ctx.fillStyle = '#888';
-      ctx.font = '18px monospace';
-      ctx.fillText(`対戦相手を待っています${dots}`, CANVAS_WIDTH / 2, 400);
+      // Player count display
+      const pc = this.playerCount;
+      const full = pc >= 3;
+      ctx.fillStyle = full ? '#00ff88' : '#ffcc44';
+      ctx.font = 'bold 28px monospace';
+      ctx.fillText(`参加者: ${pc} / 3`, CX, 320);
+
+      // Player slots
+      const slotY = 360;
+      const labels = ['キラー (あなた)', 'サバイバー1', 'サバイバー2'];
+      const colors = ['#ff2244', '#00ff88', '#00ccff'];
+      for (let i = 0; i < 3; i++) {
+        const occupied = i < pc;
+        const y = slotY + i * 36;
+        ctx.fillStyle = occupied ? colors[i] : '#444';
+        ctx.font = 'bold 16px monospace';
+        const status = occupied ? (i === 0 ? labels[i] : `${labels[i]} — 参加済み`) : `${labels[i]} — 待機中...`;
+        ctx.fillText(status, CX, y);
+      }
+
+      // Start button
+      const startY = 480;
+      const blink = Math.sin(Date.now() / 300) * 0.3 + 0.7;
+      ctx.globalAlpha = blink;
+      ctx.fillStyle = full ? '#00ff88' : '#ffcc44';
+      ctx.font = 'bold 20px monospace';
+      const startText = full ? '— SPACE でゲーム開始 (3人対戦) —' : '— SPACE でゲーム開始 (残りはBot) —';
+      ctx.fillText(startText, CX, startY);
+      ctx.globalAlpha = 1;
     } else {
-      ctx.fillText('接続中...', CANVAS_WIDTH / 2, 280);
+      ctx.fillText('接続中...', CX, 280);
     }
 
     if (this.onlineError) {
       ctx.fillStyle = '#ff4444';
       ctx.font = '14px monospace';
-      ctx.fillText(this.onlineError, CANVAS_WIDTH / 2, 450);
+      ctx.fillText(this.onlineError, CX, 540);
     }
 
     ctx.fillStyle = '#555';
     ctx.font = '12px monospace';
-    ctx.fillText('ESC: キャンセル', CANVAS_WIDTH / 2, CANVAS_HEIGHT - 60);
+    ctx.fillText('ESC: キャンセル', CX, CANVAS_HEIGHT - 40);
     ctx.textAlign = 'left';
   }
 
   private renderCharWait(ctx: CanvasRenderingContext2D): void {
+    const CX = CANVAS_WIDTH / 2;
     ctx.textAlign = 'center';
     ctx.fillStyle = '#fff';
     ctx.font = 'bold 24px monospace';
-    ctx.fillText('対戦相手の選択を待っています', CANVAS_WIDTH / 2, 250);
+    ctx.fillText('ホストの開始を待っています', CX, 230);
+
+    ctx.fillStyle = '#aaa';
+    ctx.font = '14px monospace';
+    ctx.fillText(`あなたのキャラ: ${SURVIVOR_DEFS[this.selectedSurvivor].nameJp}`, CX, 280);
 
     const dots = '.'.repeat(Math.floor(Date.now() / 500) % 4);
     ctx.fillStyle = '#888';
     ctx.font = '18px monospace';
-    ctx.fillText(dots, CANVAS_WIDTH / 2, 300);
+    ctx.fillText(`待機中${dots}`, CX, 340);
+
+    ctx.fillStyle = '#666';
+    ctx.font = '13px monospace';
+    ctx.fillText(`参加者: ${this.playerCount} / 3`, CX, 390);
+
     ctx.textAlign = 'left';
   }
 

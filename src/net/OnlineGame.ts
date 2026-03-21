@@ -1,9 +1,10 @@
 /**
  * Online multiplayer wrapper around Game.
  *
- * Host: runs Game normally, serializes state and sends to guest.
- * Guest: client-side prediction for own character (killer),
- *        interpolation buffer for opponent (survivor), server reconciliation.
+ * Host (killer): runs Game simulation, reads local input for killer,
+ *   receives guest inputs for survivors, broadcasts state to all guests.
+ * Guest (survivor): client-side prediction for own survivor,
+ *   interpolation buffer for other characters, server reconciliation.
  */
 
 import { Game } from '../core/Game';
@@ -20,9 +21,9 @@ import { ThrowAxe } from '../abilities/ThrowAxe';
 import { Trap } from '../entities/Trap';
 import { Axe } from '../entities/Axe';
 import { audioManager } from '../audio/AudioManager';
-import { TICK_DURATION, KILLER_BASE_SPEED } from '../constants';
+import { SkillCheck } from '../ui/SkillCheck';
 
-const STATE_SEND_INTERVAL = 1 / 30; // 30Hz state updates (doubled from 15Hz)
+const STATE_SEND_INTERVAL = 1 / 30; // 30Hz state updates
 
 /** Buffered snapshot for entity interpolation */
 interface Snapshot {
@@ -37,34 +38,33 @@ interface Snapshot {
   animTime: number;
 }
 
+const EMPTY_INPUT: NetInput = {
+  type: 'input', dx: 0, dy: 0,
+  interact: false, interactHeld: false, ability: false, walk: false, space: false,
+};
+
 export class OnlineGame {
   game: Game;
   private net: NetworkClient;
   private isHost: boolean;
+  /** Which survivor this guest controls (0 or 1). Only meaningful for guests. */
+  private guestIndex: number;
   private stateSendTimer = 0;
   private tick = 0;
 
-  // Guest state: remote input from guest (used by host)
-  private guestInput: NetInput = {
-    type: 'input', dx: 0, dy: 0,
-    interact: false, interactHeld: false, ability: false, walk: false, space: false,
-  };
-  // Track pressed state for guest (convert held→pressed)
-  private guestPrevInteract = false;
-  private guestPrevAbility = false;
+  // ─── Host state: remote inputs from guests (survivors) ───
+  private guestInputs: NetInput[] = [{ ...EMPTY_INPUT }, { ...EMPTY_INPUT }];
 
   // ─── Guest-side prediction & interpolation ───
-  /** Last input sent by guest (for local prediction) */
+  /** Last input sent by this guest (for local prediction) */
   private lastLocalInput = { dx: 0, dy: 0, walk: false };
-  /** Interpolation buffer for survivor (opponent) on guest side */
-  private survivorSnapshots: Snapshot[] = [];
+  /** Interpolation buffers for remote characters on guest side */
+  private killerSnapshots: Snapshot[] = [];
+  private survivorSnapshots: Snapshot[] = []; // the OTHER survivor
   /** Time tracking for interpolation */
   private interpTime = 0;
-  /** Interpolation delay (renders slightly in the past for smoothness) */
-  private readonly INTERP_DELAY = 0.1; // 100ms delay = ~3 snapshots at 30Hz
-  /** Blend factor for server reconciliation (0=snap, 1=ignore server) */
-  private readonly RECONCILE_BLEND = 0.3; // blend 30% toward server each update
-  /** Last state tick received */
+  private readonly INTERP_DELAY = 0.1;
+  private readonly RECONCILE_BLEND = 0.3;
   private lastReceivedTick = 0;
 
   constructor(
@@ -73,25 +73,34 @@ export class OnlineGame {
     selection: MenuSelection,
     net: NetworkClient,
     isHost: boolean,
+    guestIndex = 0,
   ) {
     this.net = net;
     this.isHost = isHost;
+    this.guestIndex = guestIndex;
 
     // Both host and guest create Game with same selection (same seeds → same map)
     this.game = new Game(canvas, input, selection);
+
+    // Set which survivor this player controls
+    if (!isHost) {
+      this.game.localSurvivor = guestIndex === 0 ? this.game.survivor : this.game.survivor2;
+    }
 
     // Listen for relay messages
     this.onMessage = this.onMessage.bind(this);
     net.onMessage(this.onMessage);
 
-    // If host, send game_start to guest
+    // If host, send game_start to all guests
     if (isHost) {
       net.relay({
         type: 'game_start',
         seed: this.game.map.seed,
         survivorDef: selection.survivorDef.abilityName,
+        survivor2Def: selection.survivor2Def.abilityName,
         killerDef: selection.killerDef.abilityName,
         survivorColor: selection.survivorDef.color,
+        survivor2Color: selection.survivor2Def.color,
         killerColor: selection.killerDef.color,
       });
     }
@@ -102,9 +111,14 @@ export class OnlineGame {
     const data = msg.data as NetMessage;
 
     if (this.isHost) {
-      // Host receives guest inputs
+      // Host receives guest (survivor) inputs, tagged with guestIndex
       if (data.type === 'input') {
-        this.guestInput = data;
+        const gi = (msg as { guestIndex?: number }).guestIndex ?? 0;
+        if (gi >= 0 && gi < 2) {
+          this.guestInputs[gi] = data;
+          if (gi === 0) this.guest1Connected = true;
+          if (gi === 1) this.guest2Connected = true;
+        }
       }
     } else {
       // Guest receives state updates
@@ -125,14 +139,14 @@ export class OnlineGame {
   }
 
   private updateHost(dt: number): void {
-    // Inject guest inputs into the game
-    // Guest is always the killer (host = survivor, guest = killer)
+    // Host plays as killer — Game reads killer input from local Input (WASD/E/Q)
+    // Inject guest inputs for survivors
     this.injectGuestInputs();
 
     // Run the game simulation
     this.game.update(dt);
 
-    // Periodically send state to guest
+    // Periodically send state to all guests
     this.stateSendTimer += dt;
     if (this.stateSendTimer >= STATE_SEND_INTERVAL) {
       this.stateSendTimer = 0;
@@ -141,44 +155,60 @@ export class OnlineGame {
     }
   }
 
-  /** Guest-side update: predict own character movement locally */
+  /** Guest-side update: predict own survivor movement locally */
   private updateGuest(dt: number): void {
     this.interpTime += dt;
 
-    const k = this.game.killer;
+    if (this.game.phase !== GamePhase.Playing) return;
 
-    // Skip prediction if stunned or game not playing
-    if (k.stunTimer > 0 || this.game.phase !== GamePhase.Playing) return;
+    // Client-side prediction for this guest's survivor
+    const mySurvivor = this.guestIndex === 0 ? this.game.survivor : this.game.survivor2;
 
-    // Client-side prediction: move killer locally based on last input
-    const { dx, dy, walk } = this.lastLocalInput;
-    if (dx !== 0 || dy !== 0) {
-      k.walking = walk;
-      k.move(dx, dy, dt, this.game.map);
-
-      // Update fog and camera to follow predicted position
-      this.game.killerFog.update(k.centerX, k.centerY);
-      this.game.killerCamera.follow({ x: k.centerX, y: k.centerY });
-    } else {
-      // Sync prev when idle
-      k.prevX = k.pos.x;
-      k.prevY = k.pos.y;
+    if (!mySurvivor.isIncapacitated && mySurvivor.health !== HealthState.Dead) {
+      const { dx, dy, walk } = this.lastLocalInput;
+      if (dx !== 0 || dy !== 0) {
+        mySurvivor.walking = walk;
+        mySurvivor.move(dx, dy, dt, this.game.map);
+      } else {
+        mySurvivor.prevX = mySurvivor.pos.x;
+        mySurvivor.prevY = mySurvivor.pos.y;
+      }
     }
 
-    // Interpolate survivor position from buffer
-    this.interpolateSurvivor();
+    // Interpolate remote characters
+    // Killer always interpolated from buffer
+    this.interpolateEntity(this.killerSnapshots, this.game.killer);
+    // The other survivor interpolated from buffer
+    const otherSurvivor = this.guestIndex === 0 ? this.game.survivor2 : this.game.survivor;
+    this.interpolateEntity(this.survivorSnapshots, otherSurvivor);
+
+    // Update fog and camera for this survivor's view
+    const s = this.game.survivor;
+    const s2 = this.game.survivor2;
+    this.game.survivorFog.updateMultiple([
+      { x: s.centerX, y: s.centerY },
+      { x: s2.centerX, y: s2.centerY },
+    ]);
+    // Camera follows this guest's survivor
+    this.game.survivorCamera.follow({ x: mySurvivor.centerX, y: mySurvivor.centerY });
+
+    // Killer fog/camera also update for rendering
+    this.game.killerFog.update(this.game.killer.centerX, this.game.killer.centerY);
+    this.game.killerCamera.follow({ x: this.game.killer.centerX, y: this.game.killer.centerY });
+
+    // Update skill check result display timer (cursor position comes from host via applyState)
+    const mySC = this.guestIndex === 0 ? this.game.skillCheck1 : this.game.skillCheck2;
+    if (mySC.isShowingResult) {
+      mySC.update(dt);
+    }
   }
 
-  /** Interpolate survivor between buffered snapshots */
-  private interpolateSurvivor(): void {
-    const snapshots = this.survivorSnapshots;
+  /** Interpolate an entity between buffered snapshots */
+  private interpolateEntity(snapshots: Snapshot[], entity: { pos: { x: number; y: number }; prevX: number; prevY: number; isMoving: boolean; walking: boolean; direction: Direction; animTime: number }): void {
     if (snapshots.length < 2) return;
 
-    const s = this.game.survivor;
-    // Render time is slightly in the past
     const renderTime = this.interpTime - this.INTERP_DELAY;
 
-    // Find the two snapshots to interpolate between
     let from: Snapshot | null = null;
     let to: Snapshot | null = null;
 
@@ -194,72 +224,50 @@ export class OnlineGame {
       const duration = to.time - from.time;
       const t = duration > 0 ? Math.min(1, (renderTime - from.time) / duration) : 1;
 
-      s.prevX = s.pos.x;
-      s.prevY = s.pos.y;
-      s.pos.x = from.x + (to.x - from.x) * t;
-      s.pos.y = from.y + (to.y - from.y) * t;
-      s.isMoving = to.isMoving;
-      s.walking = to.walking;
-      s.direction = numToDir(to.direction) as Direction;
-      s.animTime = from.animTime + (to.animTime - from.animTime) * t;
+      entity.prevX = entity.pos.x;
+      entity.prevY = entity.pos.y;
+      entity.pos.x = from.x + (to.x - from.x) * t;
+      entity.pos.y = from.y + (to.y - from.y) * t;
+      entity.isMoving = to.isMoving;
+      entity.walking = to.walking;
+      entity.direction = numToDir(to.direction) as Direction;
+      entity.animTime = from.animTime + (to.animTime - from.animTime) * t;
     } else if (snapshots.length > 0) {
-      // Extrapolate from last snapshot
       const last = snapshots[snapshots.length - 1];
-      s.direction = numToDir(last.direction) as Direction;
-      s.isMoving = last.isMoving;
-      s.walking = last.walking;
+      entity.direction = numToDir(last.direction) as Direction;
+      entity.isMoving = last.isMoving;
+      entity.walking = last.walking;
     }
 
-    // Prune old snapshots (keep last 1 second worth)
     while (snapshots.length > 2 && snapshots[0].time < renderTime - 1.0) {
       snapshots.shift();
     }
-
-    // Update survivor fog and camera
-    this.game.survivorFog.update(s.centerX, s.centerY);
-    this.game.survivorCamera.follow({ x: s.centerX, y: s.centerY });
   }
 
+  /** Host passes guest survivor inputs to Game via guestInput fields (no key injection) */
   private injectGuestInputs(): void {
-    const g = this.guestInput;
-    const input = this.game.input;
-
-    // We need to inject inputs. The Game reads from Input directly.
-    // Override the relevant keys for the guest's role.
-    // Since host=survivor, guest=killer:
-    // Killer uses Arrow keys in 2P mode, so we override those.
-    input.injectKey('ArrowUp', g.dy < -0.1);
-    input.injectKey('ArrowDown', g.dy > 0.1);
-    input.injectKey('ArrowLeft', g.dx < -0.1);
-    input.injectKey('ArrowRight', g.dx > 0.1);
-    input.injectKey('ShiftRight', g.walk);
-
-    // Interact (Period in 2P killer mode)
-    // Use interactHeld for isDown state (needed for generator kick hold)
-    // Detect press edge from interactHeld transition (false→true)
-    input.injectKey('Period', g.interactHeld);
-    const interactPressed = g.interactHeld && !this.guestPrevInteract;
-    if (interactPressed) input.injectPressed('Period');
-    this.guestPrevInteract = g.interactHeld;
-
-    // Ability (Comma in 2P killer mode)
-    const abilityPressed = g.ability && !this.guestPrevAbility;
-    if (abilityPressed) input.injectPressed('Comma');
-    this.guestPrevAbility = g.ability;
+    // Guest 0 → survivor1, Guest 1 → survivor2
+    // Set input fields that Game.update() reads instead of AI.
+    // No key injection — avoids conflicting with host's WASD (killer).
+    if (this.guest1Connected) this.game.guest1Input = this.guestInputs[0];
+    if (this.guest2Connected) this.game.guest2Input = this.guestInputs[1];
   }
+
+  /** Track which guests have sent at least one input */
+  private guest1Connected = false;
+  private guest2Connected = false;
 
   /** Send local input to host (guest calls this) */
   sendInput(input: Input): void {
     if (this.isHost) return;
 
-    // Guest plays as killer, reads WASD
+    // Guest plays as survivor, reads WASD
     let dx = 0, dy = 0;
     if (input.isDown('KeyW')) dy -= 1;
     if (input.isDown('KeyS')) dy += 1;
     if (input.isDown('KeyA')) dx -= 1;
     if (input.isDown('KeyD')) dx += 1;
 
-    // Store for local prediction
     this.lastLocalInput = { dx, dy, walk: input.isDown('ShiftLeft') };
 
     const msg: NetInput = {
@@ -277,6 +285,7 @@ export class OnlineGame {
   private sendState(): void {
     const g = this.game;
     const s = g.survivor;
+    const s2 = g.survivor2;
     const k = g.killer;
 
     const state: NetState = {
@@ -286,13 +295,19 @@ export class OnlineGame {
       gensCompleted: g.generatorsCompleted,
       gatesPowered: g.gatesPowered,
       inChase: g.inChase,
-      terrorIntensity: 0, // computed on guest side
+      terrorIntensity: 0,
       sId: s.characterId,
+      s2Id: s2.characterId,
       kId: k.characterId,
       s: [
         s.pos.x, s.pos.y, s.prevX, s.prevY,
         healthToNum(s.health), dirToNum(s.direction),
         s.isMoving ? 1 : 0, s.walking ? 1 : 0, s.animTime,
+      ],
+      s2: [
+        s2.pos.x, s2.pos.y, s2.prevX, s2.prevY,
+        healthToNum(s2.health), dirToNum(s2.direction),
+        s2.isMoving ? 1 : 0, s2.walking ? 1 : 0, s2.animTime,
       ],
       k: [
         k.pos.x, k.pos.y, k.prevX, k.prevY,
@@ -300,7 +315,7 @@ export class OnlineGame {
         k.stunTimer, k.attackCooldown, k.isCarrying ? 1 : 0, k.animTime,
       ],
       g: g.generators.map((gen) => [gen.progress, gen.completed ? 1 : 0, gen.beingRepaired ? 1 : 0, gen.regressing ? 1 : 0]),
-      h: g.hooks.map((h) => [h.hooked ? 1 : 0, h.stage, h.stageTimer, h.canSelfUnhook ? 1 : 0]),
+      h: g.hooks.map((h) => [h.hooked ? 1 : 0, h.stage, h.stageTimer, h.canSelfUnhook ? 1 : 0, h.rescueProgress]),
       p: g.pallets.map((p) => [p.dropped ? 1 : 0, p.isDestroyed ? 1 : 0, p.pos.x, p.pos.y, p.width, p.height]),
       gt: g.exitGates.map((gt) => [gt.powered ? 1 : 0, gt.isOpen ? 1 : 0, gt.openProgress]),
       tr: (g.killerAbility instanceof TrapAbility ? g.killerAbility.traps : [])
@@ -309,24 +324,41 @@ export class OnlineGame {
         .filter((a) => a.alive)
         .map((a) => [a.pos.x, a.pos.y, a.alive ? 1 : 0]),
       sm: g.scratchMarks.allMarks.slice(-30).map((m) => [m.x, m.y, m.age]),
-      sc: g.skillCheck.active ? {
-        active: true,
-        angle: g.skillCheck.cursor,
-        ts: g.skillCheck.targetStart,
-        te: g.skillCheck.targetStart + g.skillCheck.targetWidth,
-        gs: g.skillCheck.greatStart,
-        ge: g.skillCheck.greatStart + g.skillCheck.greatWidth,
-      } : null,
+      sc: this.serializeSkillCheck(g.skillCheck1),
+      sc2: this.serializeSkillCheck(g.skillCheck2),
       sa: [g.survivorAbility?.cooldownRemaining ?? 0, g.survivorAbility?.isActive ? 1 : 0],
+      s2a: [g.survivor2Ability?.cooldownRemaining ?? 0, g.survivor2Ability?.isActive ? 1 : 0],
       ka: [g.killerAbility?.cooldownRemaining ?? 0, g.killerAbility?.isActive ? 1 : 0],
     };
 
     this.net.relay(state);
   }
 
+  private serializeSkillCheck(sc: SkillCheck): NetState['sc'] {
+    if (sc.active) {
+      return {
+        active: true,
+        angle: sc.cursor,
+        ts: sc.targetStart,
+        te: sc.targetStart + sc.targetWidth,
+        gs: sc.greatStart,
+        ge: sc.greatStart + sc.greatWidth,
+      };
+    }
+    if (sc.isShowingResult) {
+      return {
+        active: false,
+        angle: 0, ts: 0, te: 0, gs: 0, ge: 0,
+        result: sc.lastResult,
+      };
+    }
+    return null;
+  }
+
   private applyState(state: NetState): void {
     const g = this.game;
     const s = g.survivor;
+    const s2 = g.survivor2;
     const k = g.killer;
 
     // Phase
@@ -345,55 +377,62 @@ export class OnlineGame {
 
     // Character IDs
     if (state.sId) s.characterId = state.sId;
+    if (state.s2Id) s2.characterId = state.s2Id;
     if (state.kId) k.characterId = state.kId;
 
-    // ─── Survivor: buffer for interpolation ───
-    const sd = state.s;
-    this.survivorSnapshots.push({
-      time: this.interpTime,
-      x: sd[0],
-      y: sd[1],
-      prevX: sd[2],
-      prevY: sd[3],
-      direction: sd[5],
-      isMoving: sd[6] === 1,
-      walking: sd[7] === 1,
-      animTime: sd[8],
-    });
-    // Apply non-positional survivor state immediately
-    s.health = numToHealth(sd[4]) as HealthState;
+    // My survivor: server reconciliation (blend toward authoritative position)
+    // The other survivor: interpolation buffer
+    const mySurvivor = this.guestIndex === 0 ? s : s2;
+    const otherSurvivor = this.guestIndex === 0 ? s2 : s;
+    const myData = this.guestIndex === 0 ? state.s : state.s2;
+    const otherData = this.guestIndex === 0 ? state.s2 : state.s;
 
-    // ─── Killer: server reconciliation (blend toward authoritative position) ───
-    const kd = state.k;
-    const serverX = kd[0];
-    const serverY = kd[1];
-
-    // Blend current predicted position toward server position
-    const blend = this.RECONCILE_BLEND;
-    const errorX = serverX - k.pos.x;
-    const errorY = serverY - k.pos.y;
+    // ─── My Survivor: server reconciliation ───
+    const serverX = myData[0];
+    const serverY = myData[1];
+    const errorX = serverX - mySurvivor.pos.x;
+    const errorY = serverY - mySurvivor.pos.y;
     const errorDist = Math.sqrt(errorX * errorX + errorY * errorY);
 
     if (errorDist > 100) {
-      // Large error: snap to server position (teleport/major desync)
-      k.pos.x = serverX;
-      k.pos.y = serverY;
-      k.prevX = kd[2];
-      k.prevY = kd[3];
+      mySurvivor.pos.x = serverX;
+      mySurvivor.pos.y = serverY;
+      mySurvivor.prevX = myData[2];
+      mySurvivor.prevY = myData[3];
     } else if (errorDist > 2) {
-      // Small-medium error: blend toward server
-      k.pos.x += errorX * blend;
-      k.pos.y += errorY * blend;
+      mySurvivor.pos.x += errorX * this.RECONCILE_BLEND;
+      mySurvivor.pos.y += errorY * this.RECONCILE_BLEND;
     }
-    // If error <= 2px, don't correct (prediction is close enough)
+    mySurvivor.health = numToHealth(myData[4]) as HealthState;
+    mySurvivor.direction = numToDir(myData[5]) as Direction;
+    mySurvivor.isMoving = myData[6] === 1;
+    mySurvivor.walking = myData[7] === 1;
 
-    k.direction = numToDir(kd[4]) as Direction;
-    k.isMoving = kd[5] === 1;
-    k.walking = kd[6] === 1;
+    // ─── Other Survivor: buffer for interpolation ───
+    this.survivorSnapshots.push({
+      time: this.interpTime,
+      x: otherData[0], y: otherData[1], prevX: otherData[2], prevY: otherData[3],
+      direction: otherData[5], isMoving: otherData[6] === 1, walking: otherData[7] === 1, animTime: otherData[8],
+    });
+    otherSurvivor.health = numToHealth(otherData[4]) as HealthState;
+
+    // ─── Killer: buffer for interpolation ───
+    const kd = state.k;
+    this.killerSnapshots.push({
+      time: this.interpTime,
+      x: kd[0], y: kd[1], prevX: kd[2], prevY: kd[3],
+      direction: kd[4], isMoving: kd[5] === 1, walking: kd[6] === 1, animTime: kd[10],
+    });
     k.stunTimer = kd[7];
     k.attackCooldown = kd[8];
-    k.carrying = kd[9] === 1 ? s : null;
-    k.animTime = kd[10];
+    if (kd[9] === 1) {
+      k.carrying = s.health === HealthState.Dying ? s : s2;
+    } else {
+      k.carrying = null;
+    }
+    // Sync isBeingCarried for correct rendering
+    s.isBeingCarried = k.carrying === s;
+    s2.isBeingCarried = k.carrying === s2;
 
     // Generators
     state.g.forEach((gd, i) => {
@@ -408,9 +447,18 @@ export class OnlineGame {
     // Hooks
     state.h.forEach((hd, i) => {
       if (i < g.hooks.length) {
-        g.hooks[i].hooked = hd[0] === 1 ? s : null;
+        if (hd[0] === 1) {
+          const hookX = g.hooks[i].pos.x;
+          const hookY = g.hooks[i].pos.y;
+          const d1 = Math.abs(s.pos.x - hookX) + Math.abs(s.pos.y - hookY);
+          const d2 = Math.abs(s2.pos.x - hookX) + Math.abs(s2.pos.y - hookY);
+          g.hooks[i].hooked = d1 < d2 ? s : s2;
+        } else {
+          g.hooks[i].hooked = null;
+        }
         g.hooks[i].stage = hd[1];
         g.hooks[i].stageTimer = hd[2];
+        g.hooks[i].rescueProgress = hd[4] ?? 0;
       }
     });
 
@@ -439,10 +487,9 @@ export class OnlineGame {
       }
     });
 
-    // Traps — sync trapAbility.traps array from state
+    // Traps
     const trapAbility = g.killerAbility instanceof TrapAbility ? g.killerAbility as TrapAbility : null;
     if (trapAbility) {
-      // Resize traps array to match state
       while (trapAbility.traps.length < state.tr.length) {
         trapAbility.traps.push(new Trap(0, 0));
       }
@@ -457,7 +504,7 @@ export class OnlineGame {
       });
     }
 
-    // Axes — sync throwAxe.axes array from state
+    // Axes
     const throwAxeAbility = g.killerAbility instanceof ThrowAxe ? g.killerAbility as ThrowAxe : null;
     if (throwAxeAbility) {
       while (throwAxeAbility.axes.length < state.ax.length) {
@@ -473,13 +520,23 @@ export class OnlineGame {
       });
     }
 
-    // Fog update for the guest's character (killer)
-    g.killerFog.update(k.centerX, k.centerY);
-    g.killerCamera.follow({ x: k.centerX, y: k.centerY });
-
-    // Also update survivor fog for rendering consistency
-    g.survivorFog.update(s.centerX, s.centerY);
-    g.survivorCamera.follow({ x: s.centerX, y: s.centerY });
+    // Skill check — apply host's skill check state to this guest's survivor
+    const mySCData = this.guestIndex === 0 ? state.sc : state.sc2;
+    const mySC = this.guestIndex === 0 ? g.skillCheck1 : g.skillCheck2;
+    if (mySCData && mySCData.active) {
+      mySC.active = true;
+      mySC.cursor = mySCData.angle;
+      mySC.targetStart = mySCData.ts;
+      mySC.targetWidth = mySCData.te - mySCData.ts;
+      mySC.greatStart = mySCData.gs;
+      mySC.greatWidth = mySCData.ge - mySCData.gs;
+    } else if (mySCData && mySCData.result) {
+      if (mySC.active) {
+        mySC.showResult(mySCData.result as 'great' | 'good' | 'miss');
+      }
+    } else {
+      mySC.active = false;
+    }
 
     this.lastReceivedTick = state.tick;
   }

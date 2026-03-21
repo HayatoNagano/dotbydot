@@ -1,7 +1,7 @@
 import { Entity } from './Entity';
 import { Survivor } from './Survivor';
 import { HealthState } from '../types';
-import { TILE_SIZE, HOOK_STAGE_DURATION, SURVIVOR_RUN_SPEED } from '../constants';
+import { TILE_SIZE, HOOK_STAGE_DURATION, HOOK_RESCUE_TIME, SURVIVOR_RUN_SPEED } from '../constants';
 import { eventBus } from '../core/EventBus';
 
 /** Amount of progress needed to self-unhook (accumulated by mashing Space) */
@@ -17,6 +17,10 @@ export class Hook extends Entity {
   stageTimer = 0;
   /** Self-unhook progress (0..SELF_UNHOOK_THRESHOLD) */
   selfUnhookProgress = 0;
+  /** Rescue progress from another survivor (0..HOOK_RESCUE_TIME) */
+  rescueProgress = 0;
+  /** Whether a teammate is currently rescuing */
+  beingRescued = false;
 
   constructor(tileX: number, tileY: number) {
     super(tileX * TILE_SIZE, tileY * TILE_SIZE, TILE_SIZE, TILE_SIZE);
@@ -43,8 +47,18 @@ export class Hook extends Entity {
     survivor.isBeingCarried = false;
     survivor.pos.x = this.pos.x;
     survivor.pos.y = this.pos.y;
-    this.stage = survivor.hookStage + 1;
-    survivor.hookStage = this.stage;
+    const nextStage = survivor.hookStage + 1;
+    if (nextStage >= 3) {
+      // 3rd hook = instant sacrifice
+      this.stage = 3;
+      survivor.hookStage = 3;
+      survivor.health = HealthState.Dead;
+      eventBus.emit('survivor_sacrificed', survivor);
+      this.release();
+      return;
+    }
+    this.stage = nextStage;
+    survivor.hookStage = nextStage;
     this.stageTimer = 0;
     this.selfUnhookProgress = 0;
   }
@@ -65,8 +79,28 @@ export class Hook extends Entity {
     return false;
   }
 
+  /** Called each frame by a teammate holding interact near the hook. Returns true if rescue completes. */
+  rescue(dt: number): boolean {
+    if (!this.hooked) return false;
+    this.beingRescued = true;
+    this.rescueProgress += dt;
+    if (this.rescueProgress >= HOOK_RESCUE_TIME) {
+      this.hooked.health = HealthState.Injured;
+      this.hooked.speed = SURVIVOR_RUN_SPEED;
+      this.release();
+      return true;
+    }
+    return false;
+  }
+
   update(dt: number): void {
     if (!this.hooked) return;
+
+    // Reset rescue flag each frame (set by rescue() if being rescued)
+    if (!this.beingRescued) {
+      this.rescueProgress = Math.max(0, this.rescueProgress - dt * 2); // decay if not rescuing
+    }
+    this.beingRescued = false;
 
     // Decay self-unhook progress
     if (this.selfUnhookProgress > 0) {
@@ -98,6 +132,8 @@ export class Hook extends Entity {
       this.stage = 0;
       this.stageTimer = 0;
       this.selfUnhookProgress = 0;
+      this.rescueProgress = 0;
+      this.beingRescued = false;
     }
   }
 
@@ -145,8 +181,15 @@ export class Hook extends Entity {
       ctx.lineWidth = 1;
       ctx.strokeRect(screenX - p, screenY - barH - 3 * p, T + 2 * p, barH);
 
-      // Self-unhook progress bar (below hook)
-      if (this.canSelfUnhook && this.selfUnhookProgress > 0) {
+      // Rescue progress bar (below hook, green)
+      if (this.rescueProgress > 0) {
+        const rescueRatio = Math.min(1, this.rescueProgress / HOOK_RESCUE_TIME);
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(screenX - 2 * p, screenY + T + 2 * p, T + 4 * p, barH);
+        ctx.fillStyle = '#00ff88';
+        ctx.fillRect(screenX - 2 * p, screenY + T + 2 * p, (T + 4 * p) * rescueRatio, barH);
+      } else if (this.canSelfUnhook && this.selfUnhookProgress > 0) {
+        // Self-unhook progress bar (below hook)
         ctx.fillStyle = 'rgba(0,0,0,0.6)';
         ctx.fillRect(screenX - 2 * p, screenY + T + 2 * p, T + 4 * p, barH);
         ctx.fillStyle = '#00ccff';

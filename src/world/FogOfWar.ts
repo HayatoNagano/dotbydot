@@ -4,6 +4,8 @@ export class FogOfWar {
   readonly visible: boolean[];
   private lastTileX = -1;
   private lastTileY = -1;
+  /** Track last positions for multi-update dirty check */
+  private lastPositions: string = '';
 
   constructor(
     private map: TileMap,
@@ -24,7 +26,29 @@ export class FogOfWar {
     // Clear
     this.visible.fill(false);
 
-    // BFS flood fill with line-of-sight check
+    this.computeVisibility(tileX, tileY);
+  }
+
+  /** Recalculate visibility from multiple pixel positions (union). */
+  updateMultiple(positions: { x: number; y: number }[]): void {
+    const tiles = positions.map((p) => ({
+      tx: Math.floor(p.x / this.map.tileSize),
+      ty: Math.floor(p.y / this.map.tileSize),
+    }));
+
+    // Dirty check: only recompute if any tile position changed
+    const key = tiles.map((t) => `${t.tx},${t.ty}`).join(';');
+    if (key === this.lastPositions) return;
+    this.lastPositions = key;
+
+    this.visible.fill(false);
+
+    for (const t of tiles) {
+      this.computeVisibility(t.tx, t.ty);
+    }
+  }
+
+  private computeVisibility(tileX: number, tileY: number): void {
     const r = this.radius;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {

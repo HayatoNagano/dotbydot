@@ -7,10 +7,12 @@ import type { NetMessage } from './protocol';
 
 export type ServerMessage =
   | { type: 'room_created'; code: string }
-  | { type: 'joined'; role: 'guest' }
-  | { type: 'opponent_joined' }
+  | { type: 'joined'; role: 'guest'; guestIndex: number }
+  | { type: 'player_joined'; playerCount: number; guestIndex: number }
+  | { type: 'player_left'; playerCount: number }
+  | { type: 'player_count'; playerCount: number }
   | { type: 'opponent_left' }
-  | { type: 'relay'; data: NetMessage }
+  | { type: 'relay'; data: NetMessage; guestIndex?: number }
   | { type: 'error'; message: string };
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
@@ -22,6 +24,10 @@ export class NetworkClient {
   roomCode: string | null = null;
   role: 'host' | 'guest' | null = null;
   error: string | null = null;
+  /** Guest index (0=survivor1, 1=survivor2). Set when joining a room. */
+  guestIndex = 0;
+  /** Current player count in the room (host included) */
+  playerCount = 1;
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -66,9 +72,20 @@ export class NetworkClient {
       case 'room_created':
         this.roomCode = msg.code;
         this.role = 'host';
+        this.playerCount = 1;
         break;
       case 'joined':
         this.role = 'guest';
+        this.guestIndex = msg.guestIndex;
+        break;
+      case 'player_joined':
+        this.playerCount = msg.playerCount;
+        break;
+      case 'player_left':
+        this.playerCount = msg.playerCount;
+        break;
+      case 'player_count':
+        this.playerCount = msg.playerCount;
         break;
       case 'error':
         this.error = msg.message;
@@ -117,5 +134,7 @@ export class NetworkClient {
     this.role = null;
     this.error = null;
     this.listeners = [];
+    this.playerCount = 1;
+    this.guestIndex = 0;
   }
 }

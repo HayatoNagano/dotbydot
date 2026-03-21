@@ -6,6 +6,7 @@ import { FogOfWar } from '../world/FogOfWar';
 import { Pathfinding } from '../world/Pathfinding';
 import { Generator } from '../entities/Generator';
 import { ExitGate } from '../entities/ExitGate';
+import { Hook } from '../entities/Hook';
 import { Locker } from '../entities/Locker';
 import { TILE_SIZE, TERROR_RADIUS } from '../constants';
 import { HealthState } from '../types';
@@ -15,6 +16,7 @@ enum SurvivorState {
   Flee,
   Hide,
   Escape,
+  Rescue,
 }
 
 export class SurvivorAI implements AIController {
@@ -25,6 +27,7 @@ export class SurvivorAI implements AIController {
   private pathRecalcTimer = 0;
   private stateTimer = 0;
   private targetGen: Generator | null = null;
+  private targetHook: Hook | null = null;
 
   constructor(
     private survivor: Survivor,
@@ -33,6 +36,7 @@ export class SurvivorAI implements AIController {
     private survivorFog: FogOfWar,
     private generators: Generator[],
     private exitGates: ExitGate[],
+    private hooks: Hook[],
     private lockers: Locker[],
     private gatesPowered: () => boolean,
   ) {
@@ -57,6 +61,9 @@ export class SurvivorAI implements AIController {
 
     let result = { dx: 0, dy: 0, interact: false, ability: false, walk: false };
 
+    // Check if a teammate is hooked
+    const hookedHook = this.findHookedTeammate();
+
     // State transitions
     switch (this.state) {
       case SurvivorState.Repair:
@@ -64,8 +71,12 @@ export class SurvivorAI implements AIController {
           this.state = SurvivorState.Flee;
           this.stateTimer = 0;
           this.currentPath = null;
-        }
-        if (this.gatesPowered()) {
+        } else if (hookedHook) {
+          this.state = SurvivorState.Rescue;
+          this.targetHook = hookedHook;
+          this.stateTimer = 0;
+          this.currentPath = null;
+        } else if (this.gatesPowered()) {
           this.state = SurvivorState.Escape;
           this.stateTimer = 0;
           this.currentPath = null;
@@ -74,7 +85,8 @@ export class SurvivorAI implements AIController {
 
       case SurvivorState.Flee:
         if (!canSeeKiller && this.stateTimer > 4) {
-          this.state = SurvivorState.Repair;
+          this.state = hookedHook ? SurvivorState.Rescue : SurvivorState.Repair;
+          this.targetHook = hookedHook;
           this.stateTimer = 0;
           this.currentPath = null;
         }
@@ -94,6 +106,20 @@ export class SurvivorAI implements AIController {
       case SurvivorState.Escape:
         if (canSeeKiller && killerClose) {
           this.state = SurvivorState.Flee;
+          this.stateTimer = 0;
+          this.currentPath = null;
+        }
+        break;
+
+      case SurvivorState.Rescue:
+        if (canSeeKiller && killerClose) {
+          this.state = SurvivorState.Flee;
+          this.stateTimer = 0;
+          this.currentPath = null;
+        } else if (!this.targetHook || !this.targetHook.hooked) {
+          // Teammate was freed
+          this.state = this.gatesPowered() ? SurvivorState.Escape : SurvivorState.Repair;
+          this.targetHook = null;
           this.stateTimer = 0;
           this.currentPath = null;
         }
@@ -163,6 +189,22 @@ export class SurvivorAI implements AIController {
         }
         break;
       }
+
+      case SurvivorState.Rescue: {
+        if (this.targetHook && this.targetHook.hooked) {
+          const hookDist = Math.sqrt(
+            (this.survivor.centerX - this.targetHook.centerX) ** 2 +
+            (this.survivor.centerY - this.targetHook.centerY) ** 2,
+          );
+          if (hookDist < TILE_SIZE * 2) {
+            // Close enough — hold interact to rescue
+            result.interact = true;
+          } else {
+            result = this.moveToTile(dt, survTX, survTY, this.targetHook.tileX, this.targetHook.tileY);
+          }
+        }
+        break;
+      }
     }
 
     return result;
@@ -201,6 +243,15 @@ export class SurvivorAI implements AIController {
 
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
     return { dx: dx / len, dy: dy / len, interact: false, ability: false, walk: false };
+  }
+
+  private findHookedTeammate(): Hook | null {
+    for (const hook of this.hooks) {
+      if (hook.hooked && hook.hooked !== this.survivor) {
+        return hook;
+      }
+    }
+    return null;
   }
 
   private findNearestGenerator(tx: number, ty: number): Generator | null {

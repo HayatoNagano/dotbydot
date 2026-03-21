@@ -52,49 +52,47 @@ export class InfoPanel {
   }
 
   update(
-    survivor: Survivor,
+    survivors: Survivor[],
     killer: Killer,
     generatorsCompleted: number,
     gatesPowered: boolean,
     isRepairing: boolean,
-    survivorAbility: Ability | null,
+    survivorAbilities: (Ability | null)[],
     killerAbility: Ability | null,
-    hookedHook: Hook | null,
+    hookedHooks: (Hook | null)[],
     playerRole: PlayerRole = PlayerRole.Survivor,
   ): void {
-    // Survivor section
-    const sColor = survivor.health === HealthState.Healthy ? '#00ff88'
-      : survivor.health === HealthState.Injured ? '#ffaa00'
-      : survivor.health === HealthState.Dying ? '#ff6600' : '#444';
+    // Survivor section — show all survivors
+    let survivorHtml = '';
+    for (let i = 0; i < survivors.length; i++) {
+      const survivor = survivors[i];
+      const hookedHook = hookedHooks[i] ?? null;
+      const survivorAbility = survivorAbilities[i] ?? null;
+      const label = i === 0 ? 'サバイバー1' : 'サバイバー2';
+      const sColor = survivor.health === HealthState.Healthy ? '#00ff88'
+        : survivor.health === HealthState.Injured ? '#ffaa00'
+        : survivor.health === HealthState.Dying ? '#ff6600' : '#444';
 
-    const healthText = HEALTH_JP[survivor.health] ?? survivor.health;
-    let survivorHtml = `<div style="color:${sColor};font-weight:bold;font-size:13px">◆ サバイバー</div>`;
-    survivorHtml += `<div style="font-size:12px">体力: ${healthText}</div>`;
+      const healthText = HEALTH_JP[survivor.health] ?? survivor.health;
+      survivorHtml += `<div style="color:${sColor};font-weight:bold;font-size:12px">◆ ${label}</div>`;
+      survivorHtml += `<div style="font-size:11px">体力: ${healthText}`;
 
-    if (hookedHook) {
-      survivorHtml += `<div style="color:#ff4444;font-size:12px">フックに吊られている (段階 ${hookedHook.stage}/2)</div>`;
-      if (hookedHook.canSelfUnhook) {
-        const pct = Math.floor(hookedHook.selfUnhookRatio * 100);
-        survivorHtml += `<div style="color:#00ccff;font-size:11px">Space連打で自力脱出！ <span style="display:inline-block;width:80px;height:10px;background:rgba(255,255,255,0.15);vertical-align:middle;position:relative"><span style="display:block;width:${pct}%;height:100%;background:#00ccff"></span></span> ${pct}%</div>`;
-      } else {
-        survivorHtml += `<div style="color:#666;font-size:11px">自力脱出: 使用済み</div>`;
+      if (hookedHook) {
+        survivorHtml += ` <span style="color:#ff4444">フック(${hookedHook.stage}/2)</span>`;
+      } else if (survivor.isBeingCarried) {
+        survivorHtml += ` <span style="color:#ff4444">搬送中</span>`;
+      } else if (i === 0 && isRepairing) {
+        survivorHtml += ` <span style="color:#ffdd44">修理中</span>`;
       }
-    } else if (isRepairing) {
-      survivorHtml += `<div style="color:#ffdd44;font-size:12px">修理中...</div>`;
-    } else if (survivor.isBeingCarried) {
-      survivorHtml += `<div style="color:#ff4444;font-size:12px">搬送されている</div>`;
-    } else if (survivor.health === HealthState.Dying) {
-      survivorHtml += `<div style="color:#999;font-size:12px">這って移動</div>`;
-    } else if (survivor.walking) {
-      survivorHtml += `<div style="color:#999;font-size:12px">歩行中（静音）</div>`;
-    }
+      survivorHtml += '</div>';
 
-    if (survivorAbility) {
-      const abColor = survivorAbility.isReady ? '#00ff88' : survivorAbility.isActive ? '#ffff00' : '#555';
-      const abStatus = survivorAbility.isActive ? '発動中'
-        : survivorAbility.isReady ? '使用可 [Q]'
-        : `待機 ${survivorAbility.cooldownRemaining.toFixed(1)}秒`;
-      survivorHtml += `<div style="color:${abColor};font-size:11px">能力: ${survivorAbility.name} — ${abStatus}</div>`;
+      if (survivorAbility) {
+        const abColor = survivorAbility.isReady ? '#00ff88' : survivorAbility.isActive ? '#ffff00' : '#555';
+        const abStatus = survivorAbility.isActive ? '発動中'
+          : survivorAbility.isReady ? (i === 0 ? '使用可[Q]' : '使用可')
+          : `CT${survivorAbility.cooldownRemaining.toFixed(0)}s`;
+        survivorHtml += `<div style="color:${abColor};font-size:10px">${survivorAbility.name}: ${abStatus}</div>`;
+      }
     }
 
     this.survivorSection.innerHTML = survivorHtml;

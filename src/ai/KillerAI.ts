@@ -32,10 +32,12 @@ export class KillerAI implements AIController {
   private reactionTimer = 0;
   /** Whether currently in a reaction delay */
   private reacting = false;
+  /** Currently targeted survivor */
+  private targetSurvivor: Survivor | null = null;
 
   constructor(
     private killer: Killer,
-    private survivor: Survivor,
+    private survivors: Survivor[],
     private map: TileMap,
     private killerFog: FogOfWar,
     private scratchMarks: ScratchMarks,
@@ -43,6 +45,45 @@ export class KillerAI implements AIController {
     private generators: Generator[],
   ) {
     this.pathfinding = new Pathfinding(map);
+  }
+
+  /** Find the best survivor to target (nearest visible, prioritize dying) */
+  private pickTarget(): { survivor: Survivor; canSee: boolean; dist: number } | null {
+    let best: { survivor: Survivor; canSee: boolean; dist: number } | null = null;
+
+    for (const s of this.survivors) {
+      if (s.health === HealthState.Dead) continue;
+
+      const survTX = Math.floor(s.centerX / TILE_SIZE);
+      const survTY = Math.floor(s.centerY / TILE_SIZE);
+      const canSee = this.killerFog.isVisible(survTX, survTY) && !s.isIncapacitated;
+      const dist = Math.sqrt(
+        (this.killer.centerX - s.centerX) ** 2 +
+        (this.killer.centerY - s.centerY) ** 2,
+      );
+
+      // Prioritize: visible > not visible, dying > injured > healthy, closer > farther
+      if (!best) {
+        best = { survivor: s, canSee, dist };
+        continue;
+      }
+
+      // Prefer visible survivors
+      if (canSee && !best.canSee) {
+        best = { survivor: s, canSee, dist };
+      } else if (canSee === best.canSee) {
+        // Prefer dying survivors (for pickup)
+        const sDying = s.health === HealthState.Dying;
+        const bDying = best.survivor.health === HealthState.Dying;
+        if (sDying && !bDying) {
+          best = { survivor: s, canSee, dist };
+        } else if (sDying === bDying && dist < best.dist) {
+          best = { survivor: s, canSee, dist };
+        }
+      }
+    }
+
+    return best;
   }
 
   update(dt: number): { dx: number; dy: number; interact: boolean; ability: boolean; walk: boolean } {
@@ -60,17 +101,35 @@ export class KillerAI implements AIController {
       }
     }
 
-    // Check if we can see survivor (within fog)
+    // Pick best target
+    const target = this.pickTarget();
+    if (target) {
+      this.targetSurvivor = target.survivor;
+    }
+
+    const ts = this.targetSurvivor;
+    if (!ts || ts.health === HealthState.Dead) {
+      // No valid target, patrol
+      this.targetSurvivor = null;
+      this.state = KillerState.Patrol;
+    }
+
     const killerTX = Math.floor(this.killer.centerX / TILE_SIZE);
     const killerTY = Math.floor(this.killer.centerY / TILE_SIZE);
-    const survTX = Math.floor(this.survivor.centerX / TILE_SIZE);
-    const survTY = Math.floor(this.survivor.centerY / TILE_SIZE);
-    const canSeeSurvivor = this.killerFog.isVisible(survTX, survTY) && !this.survivor.isIncapacitated;
 
-    const distToSurvivor = Math.sqrt(
-      (this.killer.centerX - this.survivor.centerX) ** 2 +
-      (this.killer.centerY - this.survivor.centerY) ** 2,
-    );
+    let survTX = 0, survTY = 0;
+    let canSeeSurvivor = false;
+    let distToSurvivor = Infinity;
+
+    if (ts && ts.health !== HealthState.Dead) {
+      survTX = Math.floor(ts.centerX / TILE_SIZE);
+      survTY = Math.floor(ts.centerY / TILE_SIZE);
+      canSeeSurvivor = this.killerFog.isVisible(survTX, survTY) && !ts.isIncapacitated;
+      distToSurvivor = Math.sqrt(
+        (this.killer.centerX - ts.centerX) ** 2 +
+        (this.killer.centerY - ts.centerY) ** 2,
+      );
+    }
 
     let result = { dx: 0, dy: 0, interact: false, ability: false, walk: false };
 
@@ -117,7 +176,7 @@ export class KillerAI implements AIController {
           this.investigateTarget = { x: survTX, y: survTY };
           this.stateTimer = 0;
         }
-        if (this.survivor.health === HealthState.Dying) {
+        if (ts && ts.health === HealthState.Dying) {
           this.state = KillerState.Attack;
           this.stateTimer = 0;
         }
@@ -170,7 +229,7 @@ export class KillerAI implements AIController {
 
       case KillerState.Attack:
         // Move to dying survivor to pick up — slight delay before pickup
-        if (this.stateTimer > 0.5) {
+        if (this.stateTimer > 0.5 && ts) {
           result = this.moveToTile(dt, killerTX, killerTY, survTX, survTY);
           if (distToSurvivor < TILE_SIZE * 1.5) {
             result.interact = true; // Pickup

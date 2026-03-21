@@ -24,6 +24,7 @@ export const GENERATORS_ON_MAP = 5;
 export const GENERATORS_TO_POWER = 3;
 export const GENERATOR_REPAIR_TIME = 45; // seconds
 export const HOOK_STAGE_DURATION = 30; // seconds per stage
+export const HOOK_RESCUE_TIME = 1.5; // seconds to rescue from hook
 export const TERROR_RADIUS = 12; // tiles
 
 // Game Loop

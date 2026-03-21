@@ -64,6 +64,13 @@ export class SkillCheck {
     return this.resultTimer > 0;
   }
 
+  /** Apply result from network (for online guest) */
+  showResult(result: 'great' | 'good' | 'miss'): void {
+    this.result = result;
+    this.resultTimer = SkillCheck.RESULT_DISPLAY_TIME;
+    this.active = false;
+  }
+
   get lastResult(): 'none' | 'great' | 'good' | 'miss' {
     return this.result;
   }

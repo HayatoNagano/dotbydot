@@ -1,14 +1,17 @@
 import { WebSocketServer, WebSocket } from 'ws';
 
 const PORT = Number(process.env.PORT) || 3001;
+const MAX_GUESTS = 2;
 
 interface Room {
   code: string;
   host: WebSocket;
-  guest: WebSocket | null;
+  guests: WebSocket[];
 }
 
 const rooms = new Map<string, Room>();
+/** Map from WebSocket to its guest index within the room */
+const guestIndices = new Map<WebSocket, number>();
 
 function generateCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -43,7 +46,7 @@ wss.on('connection', (ws) => {
     switch (msg.type) {
       case 'create_room': {
         const code = generateCode();
-        const room: Room = { code, host: ws, guest: null };
+        const room: Room = { code, host: ws, guests: [] };
         rooms.set(code, room);
         myRoom = room;
         myRole = 'host';
@@ -59,24 +62,38 @@ wss.on('connection', (ws) => {
           send(ws, { type: 'error', message: '部屋が見つかりません' });
           break;
         }
-        if (room.guest) {
+        if (room.guests.length >= MAX_GUESTS) {
           send(ws, { type: 'error', message: '部屋が満員です' });
           break;
         }
-        room.guest = ws;
+        const guestIndex = room.guests.length;
+        room.guests.push(ws);
+        guestIndices.set(ws, guestIndex);
         myRoom = room;
         myRole = 'guest';
-        send(ws, { type: 'joined', role: 'guest' });
-        send(room.host, { type: 'opponent_joined' });
-        console.log(`Room ${code}: guest joined`);
+        send(ws, { type: 'joined', role: 'guest', guestIndex });
+        // Notify host of player count
+        const playerCount = 1 + room.guests.length;
+        send(room.host, { type: 'player_joined', playerCount, guestIndex });
+        // Notify all existing guests of player count
+        for (const g of room.guests) {
+          send(g, { type: 'player_count', playerCount });
+        }
+        console.log(`Room ${code}: guest ${guestIndex} joined (${playerCount}/3)`);
         break;
       }
 
       case 'relay': {
         if (!myRoom) break;
-        const target = myRole === 'host' ? myRoom.guest : myRoom.host;
-        if (target) {
-          send(target, { type: 'relay', data: msg.data });
+        if (myRole === 'host') {
+          // Host broadcasts to all guests
+          for (const g of myRoom.guests) {
+            send(g, { type: 'relay', data: msg.data });
+          }
+        } else {
+          // Guest sends to host, tagged with guestIndex
+          const gi = guestIndices.get(ws) ?? 0;
+          send(myRoom.host, { type: 'relay', data: msg.data, guestIndex: gi });
         }
         break;
       }
@@ -98,11 +115,23 @@ wss.on('connection', (ws) => {
     myRoom = null;
 
     if (myRole === 'host') {
-      if (room.guest) send(room.guest, { type: 'opponent_left' });
+      // Host left: notify all guests and delete room
+      for (const g of room.guests) {
+        send(g, { type: 'opponent_left' });
+        guestIndices.delete(g);
+      }
       rooms.delete(code);
     } else if (myRole === 'guest') {
-      room.guest = null;
-      send(room.host, { type: 'opponent_left' });
+      // Guest left: remove from array, notify host
+      const idx = room.guests.indexOf(ws);
+      if (idx >= 0) room.guests.splice(idx, 1);
+      guestIndices.delete(ws);
+      const playerCount = 1 + room.guests.length;
+      send(room.host, { type: 'player_left', playerCount });
+      // Notify remaining guests
+      for (const g of room.guests) {
+        send(g, { type: 'player_count', playerCount });
+      }
     }
     console.log(`Room ${code}: ${myRole} left`);
     myRole = null;
