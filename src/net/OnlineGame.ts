@@ -134,6 +134,15 @@ export class OnlineGame {
       if (data.type === 'input') {
         const gi = (msg as { guestIndex?: number }).guestIndex ?? 0;
         if (gi >= 0 && gi < 2) {
+          // Accumulate one-shot flags so they aren't lost if multiple messages
+          // arrive between game ticks (the last message would otherwise overwrite)
+          const prev = this.guestInputs[gi];
+          if (prev.interact) data.interact = true;
+          if (prev.ability) data.ability = true;
+          if (prev.space) data.space = true;
+          // If a one-shot interact was accumulated, also ensure interactHeld is true
+          // (pressing implies holding for at least that tick)
+          if (data.interact) data.interactHeld = true;
           this.guestInputs[gi] = data;
           if (data.tick !== undefined) this.lastGuestTick[gi] = data.tick;
           if (gi === 0) this.guest1Connected = true;
@@ -322,8 +331,15 @@ export class OnlineGame {
     // Guest 0 → survivor1, Guest 1 → survivor2
     // Set input fields that Game.update() reads instead of AI.
     // No key injection — avoids conflicting with host's WASD (killer).
-    if (this.guest1Connected) this.game.guest1Input = this.guestInputs[0];
-    if (this.guest2Connected) this.game.guest2Input = this.guestInputs[1];
+    if (this.guest1Connected) {
+      this.game.guest1Input = this.guestInputs[0];
+      // Clear one-shot flags after consumption so they fire only once
+      this.guestInputs[0] = { ...this.guestInputs[0], interact: false, ability: false, space: false };
+    }
+    if (this.guest2Connected) {
+      this.game.guest2Input = this.guestInputs[1];
+      this.guestInputs[1] = { ...this.guestInputs[1], interact: false, ability: false, space: false };
+    }
   }
 
   /** Track which guests have sent at least one input */
