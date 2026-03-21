@@ -30,6 +30,7 @@ export interface NetInput {
   ability: boolean;
   walk: boolean;
   space: boolean; // skill check / self-unhook
+  tick?: number; // guest-local tick counter for server reconciliation
 }
 
 /** Host → Guests: Compact game state snapshot (sent at ~30Hz) */
@@ -73,6 +74,9 @@ export interface NetState {
   sa: number[];
   s2a: number[];
   ka: number[];
+  // Server reconciliation: last processed guest tick per survivor controller
+  ackTick: number;
+  ackTick2: number;
 }
 
 /** Host → Guest / Guest → Host: Sound effect trigger */

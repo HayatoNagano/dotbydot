@@ -241,20 +241,6 @@ const loop = new GameLoop(
         game.update(dt);
       }
 
-      // Restart
-      if (game.phase !== GamePhase.Playing && input.wasPressed('KeyR')) {
-        if (onlineGame) {
-          // No restart in online mode
-        } else {
-          audioManager.stopHeartbeat();
-          audioManager.stopAmbient();
-          audioManager.stopChase();
-          game.infoPanel.hide();
-          game = new Game(canvas, input, game.selection);
-          audioManager.startAmbient();
-        }
-      }
-
       // Return to menu
       if (input.wasPressed('Escape') && game.phase !== GamePhase.Playing) {
         returnToMenu();

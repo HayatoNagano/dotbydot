@@ -834,7 +834,7 @@ export class Game {
     }
     this.prevPhase = this.phase;
     // Note: input.endFrame() is called by main.ts game loop, not here,
-    // so that main.ts can read wasPressed('KeyR') / wasPressed('Escape') after update.
+    // so that main.ts can read wasPressed('Escape') after update.
   }
 
   /** Handle survivor-specific interactions (repair, pallet, locker, skill check, etc.) */
@@ -1076,7 +1076,7 @@ export class Game {
     ctx.fillText(msg, CANVAS_WIDTH / 2, GAME_HEIGHT / 2);
     ctx.font = '16px monospace';
     ctx.fillStyle = '#aaa';
-    ctx.fillText('R: リスタート　ESC: メニューに戻る', CANVAS_WIDTH / 2, GAME_HEIGHT / 2 + 40);
+    ctx.fillText('ESC: メニューに戻る', CANVAS_WIDTH / 2, GAME_HEIGHT / 2 + 40);
     ctx.textAlign = 'left';
   }
 }

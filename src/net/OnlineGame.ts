@@ -22,6 +22,7 @@ import { Trap } from '../entities/Trap';
 import { Axe } from '../entities/Axe';
 import { audioManager } from '../audio/AudioManager';
 import { SkillCheck } from '../ui/SkillCheck';
+import { TICK_DURATION } from '../constants';
 
 const STATE_SEND_INTERVAL = 1 / 30; // 30Hz state updates
 const FULL_STATE_INTERVAL = 1;       // Full state every 1s for reliability
@@ -37,6 +38,14 @@ interface Snapshot {
   isMoving: boolean;
   walking: boolean;
   animTime: number;
+}
+
+/** Per-tick prediction entry for server reconciliation replay */
+interface PredictionEntry {
+  tick: number;
+  dx: number;
+  dy: number;
+  walk: boolean;
 }
 
 const EMPTY_INPUT: NetInput = {
@@ -56,17 +65,22 @@ export class OnlineGame {
 
   // ─── Host state: remote inputs from guests (survivors) ───
   private guestInputs: NetInput[] = [{ ...EMPTY_INPUT }, { ...EMPTY_INPUT }];
+  /** Last received guest tick per guest (for ack in state updates) */
+  private lastGuestTick: number[] = [0, 0];
 
   // ─── Guest-side prediction & interpolation ───
-  /** Last input sent by this guest (for local prediction) */
+  /** Last input applied locally (for local prediction) */
   private lastLocalInput = { dx: 0, dy: 0, walk: false };
+  /** Per-tick prediction buffer for server reconciliation with replay */
+  private localTick = 0;
+  private predictionBuffer: PredictionEntry[] = [];
+  private readonly MAX_PREDICTION_BUFFER = 600; // 10s at 60Hz
   /** Interpolation buffers for remote characters on guest side */
   private killerSnapshots: Snapshot[] = [];
   private survivorSnapshots: Snapshot[] = []; // the OTHER survivor
   /** Time tracking for interpolation */
   private interpTime = 0;
   private readonly INTERP_DELAY = 0.066; // 66ms = 2 state updates at 30Hz
-  private readonly RECONCILE_BLEND = 0.3;
   private lastReceivedTick = 0;
 
   constructor(
@@ -118,6 +132,7 @@ export class OnlineGame {
         const gi = (msg as { guestIndex?: number }).guestIndex ?? 0;
         if (gi >= 0 && gi < 2) {
           this.guestInputs[gi] = data;
+          if (data.tick !== undefined) this.lastGuestTick[gi] = data.tick;
           if (gi === 0) this.guest1Connected = true;
           if (gi === 1) this.guest2Connected = true;
         }
@@ -184,6 +199,14 @@ export class OnlineGame {
 
     if (!mySurvivor.isIncapacitated && mySurvivor.health !== HealthState.Dead) {
       const { dx, dy, walk } = this.lastLocalInput;
+
+      // Record this tick in prediction buffer for server reconciliation replay
+      this.localTick++;
+      this.predictionBuffer.push({ tick: this.localTick, dx, dy, walk });
+      if (this.predictionBuffer.length > this.MAX_PREDICTION_BUFFER) {
+        this.predictionBuffer.splice(0, this.predictionBuffer.length - this.MAX_PREDICTION_BUFFER);
+      }
+
       if (dx !== 0 || dy !== 0) {
         mySurvivor.walking = walk;
         mySurvivor.move(dx, dy, dt, this.game.map);
@@ -261,6 +284,29 @@ export class OnlineGame {
     }
   }
 
+  /** Replay a single tick of movement (position only, no animation side effects) */
+  private replayMove(
+    entity: { pos: { x: number; y: number }; width: number; height: number; speed: number },
+    dx: number, dy: number, walk: boolean,
+  ): void {
+    if (dx === 0 && dy === 0) return;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    dx /= len;
+    dy /= len;
+    const speed = walk ? entity.speed * 0.45 : entity.speed;
+    const moveX = dx * speed * TICK_DURATION;
+    const moveY = dy * speed * TICK_DURATION;
+
+    const nextX = entity.pos.x + moveX;
+    if (!this.game.map.collidesRect(nextX, entity.pos.y, entity.width, entity.height)) {
+      entity.pos.x = nextX;
+    }
+    const nextY = entity.pos.y + moveY;
+    if (!this.game.map.collidesRect(entity.pos.x, nextY, entity.width, entity.height)) {
+      entity.pos.y = nextY;
+    }
+  }
+
   /** Host passes guest survivor inputs to Game via guestInput fields (no key injection) */
   private injectGuestInputs(): void {
     // Guest 0 → survivor1, Guest 1 → survivor2
@@ -318,17 +364,18 @@ export class OnlineGame {
       ability: input.wasPressed('KeyQ'),
       walk: input.isDown('ShiftLeft'),
       space: spaceForHost,
+      tick: this.localTick,
     };
 
     // Always send immediately if one-shot actions are pressed (interact, ability, space)
     const hasOneShot = msg.interact || msg.ability || msg.space;
 
-    // Otherwise, rate-limit to 30Hz and only send if input changed
+    // Send immediately on input change or one-shot actions; rate-limit unchanged input to 30Hz
     this.inputSendTimer += dt;
     const inputChanged = msg.dx !== this.prevSentInput.dx || msg.dy !== this.prevSentInput.dy
       || msg.interactHeld !== this.prevSentInput.interactHeld || msg.walk !== this.prevSentInput.walk;
 
-    if (hasOneShot || (this.inputSendTimer >= this.INPUT_SEND_INTERVAL && inputChanged)) {
+    if (hasOneShot || inputChanged || this.inputSendTimer >= this.INPUT_SEND_INTERVAL) {
       this.inputSendTimer = 0;
       this.prevSentInput = msg;
       this.net.relay(msg);
@@ -395,6 +442,8 @@ export class OnlineGame {
       sa: [r(g.survivorAbility?.cooldownRemaining ?? 0), g.survivorAbility?.isActive ? 1 : 0],
       s2a: [r(g.survivor2Ability?.cooldownRemaining ?? 0), g.survivor2Ability?.isActive ? 1 : 0],
       ka: [r(g.killerAbility?.cooldownRemaining ?? 0), g.killerAbility?.isActive ? 1 : 0],
+      ackTick: this.lastGuestTick[0],
+      ackTick2: this.lastGuestTick[1],
     };
 
     this.net.relay(state);
@@ -453,30 +502,41 @@ export class OnlineGame {
     const myData = this.guestIndex === 0 ? state.s : state.s2;
     const otherData = this.guestIndex === 0 ? state.s2 : state.s;
 
-    // ─── My Survivor: server reconciliation ───
+    // ─── My Survivor: server reconciliation with input replay ───
     const serverX = myData[0];
     const serverY = myData[1];
-    const errorX = serverX - mySurvivor.pos.x;
-    const errorY = serverY - mySurvivor.pos.y;
-    const errorDist = Math.sqrt(errorX * errorX + errorY * errorY);
+    mySurvivor.health = numToHealth(myData[4]) as HealthState;
 
-    if (errorDist > 100) {
+    if (mySurvivor.isIncapacitated) {
+      // No local prediction when incapacitated — just snap to server
       mySurvivor.pos.x = serverX;
       mySurvivor.pos.y = serverY;
       mySurvivor.prevX = myData[2];
       mySurvivor.prevY = myData[3];
-    } else if (errorDist > 2) {
-      mySurvivor.pos.x += errorX * this.RECONCILE_BLEND;
-      mySurvivor.pos.y += errorY * this.RECONCILE_BLEND;
-    }
-    mySurvivor.health = numToHealth(myData[4]) as HealthState;
-    // Don't overwrite isMoving/direction/walking — these are set by local prediction
-    // to avoid stuttering caused by stale server state arriving at 30Hz.
-    // Only overwrite when incapacitated (no local prediction running).
-    if (mySurvivor.isIncapacitated) {
       mySurvivor.direction = numToDir(myData[5]) as Direction;
       mySurvivor.isMoving = myData[6] === 1;
       mySurvivor.walking = myData[7] === 1;
+      this.predictionBuffer.length = 0;
+    } else {
+      // Discard acknowledged prediction entries
+      const ackTick = this.guestIndex === 0 ? state.ackTick : state.ackTick2;
+      while (this.predictionBuffer.length > 0 && this.predictionBuffer[0].tick <= ackTick) {
+        this.predictionBuffer.shift();
+      }
+
+      // Start from server-authoritative position and replay unacknowledged inputs
+      mySurvivor.pos.x = serverX;
+      mySurvivor.pos.y = serverY;
+
+      let replayPrevX = serverX;
+      let replayPrevY = serverY;
+      for (const entry of this.predictionBuffer) {
+        replayPrevX = mySurvivor.pos.x;
+        replayPrevY = mySurvivor.pos.y;
+        this.replayMove(mySurvivor, entry.dx, entry.dy, entry.walk);
+      }
+      mySurvivor.prevX = replayPrevX;
+      mySurvivor.prevY = replayPrevY;
     }
 
     // ─── Other Survivor: buffer for interpolation ───
