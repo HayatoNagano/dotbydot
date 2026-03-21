@@ -64,11 +64,19 @@ export class SkillCheck {
     return this.resultTimer > 0;
   }
 
-  /** Apply result from network (for online guest) */
+  /** Apply result from network (for online guest display) */
   showResult(result: 'great' | 'good' | 'miss'): void {
     this.result = result;
     this.resultTimer = SkillCheck.RESULT_DISPLAY_TIME;
     this.active = false;
+  }
+
+  /** Apply a remote player's result on host's authoritative skill check */
+  applyResult(result: 'great' | 'good' | 'miss'): void {
+    if (!this.active) return;
+    this.result = result;
+    this.active = false;
+    this.resultTimer = SkillCheck.RESULT_DISPLAY_TIME;
   }
 
   get lastResult(): 'none' | 'great' | 'good' | 'miss' {

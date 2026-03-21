@@ -97,7 +97,13 @@ export interface NetStartGame {
   type: 'start_game';
 }
 
-export type NetMessage = NetGameStart | NetInput | NetState | NetSound | NetCharSelect | NetReady | NetStartGame;
+/** Guest → Host: Skill check result (guest runs skill check locally) */
+export interface NetSkillCheckResult {
+  type: 'sc_result';
+  result: 'great' | 'good' | 'miss';
+}
+
+export type NetMessage = NetGameStart | NetInput | NetState | NetSound | NetCharSelect | NetReady | NetStartGame | NetSkillCheckResult;
 
 // ─── Helpers ───
 

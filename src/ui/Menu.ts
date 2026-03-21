@@ -772,15 +772,27 @@ export class Menu {
       ctx.fillText('対戦ルーム', CX, 130);
 
       // Room code
-      ctx.fillStyle = '#ff8844';
-      ctx.font = 'bold 56px monospace';
-      ctx.letterSpacing = '16px';
-      ctx.fillText(this.roomCode, CX, 220);
-      ctx.letterSpacing = '0px';
+      if (this.roomCode) {
+        ctx.fillStyle = '#ff8844';
+        ctx.font = 'bold 56px monospace';
+        ctx.letterSpacing = '16px';
+        ctx.fillText(this.roomCode, CX, 220);
+        ctx.letterSpacing = '0px';
 
-      ctx.fillStyle = '#aaa';
-      ctx.font = '14px monospace';
-      ctx.fillText('このコードを相手に伝えてください', CX, 260);
+        ctx.fillStyle = '#aaa';
+        ctx.font = '14px monospace';
+        ctx.fillText('このコードを相手に伝えてください', CX, 260);
+      } else {
+        // Loading state — waiting for server response
+        const dots = '.'.repeat(Math.floor(Date.now() / 400) % 4);
+        ctx.fillStyle = '#888';
+        ctx.font = 'bold 28px monospace';
+        ctx.fillText(`ルーム作成中${dots}`, CX, 210);
+
+        ctx.fillStyle = '#666';
+        ctx.font = '12px monospace';
+        ctx.fillText('サーバーに接続しています', CX, 250);
+      }
 
       // Player count display
       const pc = this.playerCount;

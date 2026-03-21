@@ -11,7 +11,7 @@ import { Game } from '../core/Game';
 import { Input } from '../core/Input';
 import { NetworkClient, ServerMessage } from './NetworkClient';
 import {
-  NetState, NetInput, NetMessage,
+  NetState, NetInput, NetMessage, NetSkillCheckResult,
   dirToNum, numToDir, healthToNum, numToHealth,
 } from './protocol';
 import { MenuSelection } from '../ui/Menu';
@@ -122,6 +122,21 @@ export class OnlineGame {
           if (gi === 1) this.guest2Connected = true;
         }
       }
+      // Host receives skill check results from guests
+      if (data.type === 'sc_result') {
+        const gi = (msg as { guestIndex?: number }).guestIndex ?? 0;
+        const sc = gi === 0 ? this.game.skillCheck1 : this.game.skillCheck2;
+        const result = (data as NetSkillCheckResult).result;
+        if (sc.active) {
+          // Apply the guest's result on the host's authoritative skillCheck
+          sc.applyResult(result);
+          switch (result) {
+            case 'great': audioManager.playSkillCheckGreat(); break;
+            case 'good': audioManager.playSkillCheckGood(); break;
+            case 'miss': audioManager.playSkillCheckMiss(); break;
+          }
+        }
+      }
     } else {
       // Guest receives state updates
       if (data.type === 'state') {
@@ -173,6 +188,7 @@ export class OnlineGame {
         mySurvivor.walking = walk;
         mySurvivor.move(dx, dy, dt, this.game.map);
       } else {
+        mySurvivor.isMoving = false;
         mySurvivor.prevX = mySurvivor.pos.x;
         mySurvivor.prevY = mySurvivor.pos.y;
       }
@@ -199,11 +215,9 @@ export class OnlineGame {
     this.game.killerFog.update(this.game.killer.centerX, this.game.killer.centerY);
     this.game.killerCamera.follow({ x: this.game.killer.centerX, y: this.game.killer.centerY });
 
-    // Update skill check result display timer (cursor position comes from host via applyState)
+    // Skill check runs LOCALLY on guest at 60fps for responsive input
     const mySC = this.guestIndex === 0 ? this.game.skillCheck1 : this.game.skillCheck2;
-    if (mySC.isShowingResult) {
-      mySC.update(dt);
-    }
+    mySC.update(dt);
   }
 
   /** Interpolate an entity between buffered snapshots */
@@ -278,6 +292,24 @@ export class OnlineGame {
 
     this.lastLocalInput = { dx, dy, walk: input.isDown('ShiftLeft') };
 
+    // Handle skill check Space press locally — run hit() on guest, send result to host
+    const spacePressed = input.wasPressed('Space');
+    const mySC = this.guestIndex === 0 ? this.game.skillCheck1 : this.game.skillCheck2;
+    let spaceForHost = spacePressed; // Forward to host for self-unhook etc.
+
+    if (spacePressed && mySC.active) {
+      // Skill check is active — handle locally
+      const result = mySC.hit();
+      switch (result) {
+        case 'great': audioManager.playSkillCheckGreat(); break;
+        case 'good': audioManager.playSkillCheckGood(); break;
+        case 'miss': audioManager.playSkillCheckMiss(); break;
+      }
+      // Send result to host so it can apply repair bonus
+      this.net.relay({ type: 'sc_result', result } as NetSkillCheckResult);
+      spaceForHost = false; // Don't also send as regular space input
+    }
+
     const msg: NetInput = {
       type: 'input',
       dx, dy,
@@ -285,7 +317,7 @@ export class OnlineGame {
       interactHeld: input.isDown('KeyE'),
       ability: input.wasPressed('KeyQ'),
       walk: input.isDown('ShiftLeft'),
-      space: input.wasPressed('Space'),
+      space: spaceForHost,
     };
 
     // Always send immediately if one-shot actions are pressed (interact, ability, space)
@@ -438,9 +470,14 @@ export class OnlineGame {
       mySurvivor.pos.y += errorY * this.RECONCILE_BLEND;
     }
     mySurvivor.health = numToHealth(myData[4]) as HealthState;
-    mySurvivor.direction = numToDir(myData[5]) as Direction;
-    mySurvivor.isMoving = myData[6] === 1;
-    mySurvivor.walking = myData[7] === 1;
+    // Don't overwrite isMoving/direction/walking — these are set by local prediction
+    // to avoid stuttering caused by stale server state arriving at 30Hz.
+    // Only overwrite when incapacitated (no local prediction running).
+    if (mySurvivor.isIncapacitated) {
+      mySurvivor.direction = numToDir(myData[5]) as Direction;
+      mySurvivor.isMoving = myData[6] === 1;
+      mySurvivor.walking = myData[7] === 1;
+    }
 
     // ─── Other Survivor: buffer for interpolation ───
     this.survivorSnapshots.push({
@@ -554,23 +591,21 @@ export class OnlineGame {
       });
     }
 
-    // Skill check — apply host's skill check state to this guest's survivor
+    // Skill check — guest runs cursor locally for responsive input.
+    // Host only sends the trigger (zone info). Guest handles cursor + hit locally.
     const mySCData = this.guestIndex === 0 ? state.sc : state.sc2;
     const mySC = this.guestIndex === 0 ? g.skillCheck1 : g.skillCheck2;
-    if (mySCData && mySCData.active) {
+    if (mySCData && mySCData.active && !mySC.active && !mySC.isShowingResult) {
+      // Host triggered a new skill check — start it locally with the same zones
       mySC.active = true;
-      mySC.cursor = mySCData.angle;
+      mySC.cursor = 0; // Start from beginning, rotate locally
       mySC.targetStart = mySCData.ts;
       mySC.targetWidth = mySCData.te - mySCData.ts;
       mySC.greatStart = mySCData.gs;
       mySC.greatWidth = mySCData.ge - mySCData.gs;
-    } else if (mySCData && mySCData.result) {
-      if (mySC.active) {
-        mySC.showResult(mySCData.result as 'great' | 'good' | 'miss');
-      }
-    } else {
-      mySC.active = false;
     }
+    // Don't overwrite active skill check or result display from host state —
+    // cursor rotation and hit detection are fully local on guest.
 
     this.lastReceivedTick = state.tick;
   }
