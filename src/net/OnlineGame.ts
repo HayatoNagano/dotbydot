@@ -153,7 +153,10 @@ export class OnlineGame {
       // Survivor prediction
       const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.game.survivor2;
       const inLocker = this.game.lockers.some((l) => l.occupant === mySurvivor);
-      if (!mySurvivor.isIncapacitated && mySurvivor.health !== HealthState.Dead && !inLocker) {
+      const isHooked = this.game.hooks.some((h) => h.hooked === mySurvivor);
+      const canMove = !mySurvivor.isIncapacitated && mySurvivor.health !== HealthState.Dead
+        && !inLocker && !isHooked && !mySurvivor.isBeingCarried;
+      if (canMove) {
         const { dx, dy, walk } = this.lastLocalInput;
         this.localTick++;
         this.predictionBuffer.push({ tick: this.localTick, dx, dy, walk });
@@ -460,7 +463,20 @@ export class OnlineGame {
       const ackTick = this.myRole === 'survivor1' ? state.ackTick : state.ackTick2;
       mySurvivor.health = numToHealth(myData[4]) as HealthState;
 
-      if (mySurvivor.isIncapacitated) {
+      // Check if survivor cannot move: incapacitated, hooked, carried, or in locker
+      const myLockerVal = this.myRole === 'survivor1' ? 1 : 2;
+      const isInLocker = state.l.some((v) => v === myLockerVal);
+      const isCarried = state.k[9] === 1 && mySurvivor.health === HealthState.Dying;
+      // Check if any hook holds a survivor near my server position
+      const isHooked = state.h.some((hd, i) => {
+        if (hd[0] !== 1) return false;
+        const hook = this.game.hooks[i];
+        if (!hook) return false;
+        const dist = Math.abs(serverX - hook.pos.x) + Math.abs(serverY - hook.pos.y);
+        return dist < 48; // within 1 tile
+      });
+
+      if (mySurvivor.isIncapacitated || isHooked || isCarried || isInLocker) {
         mySurvivor.pos.x = serverX;
         mySurvivor.pos.y = serverY;
         mySurvivor.prevX = myData[2];
