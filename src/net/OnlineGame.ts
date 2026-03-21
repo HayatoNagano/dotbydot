@@ -2,7 +2,8 @@
  * Online multiplayer wrapper around Game.
  *
  * Host: runs Game normally, serializes state and sends to guest.
- * Guest: receives state, applies to local Game (same seed/map), renders only.
+ * Guest: client-side prediction for own character (killer),
+ *        interpolation buffer for opponent (survivor), server reconciliation.
  */
 
 import { Game } from '../core/Game';
@@ -19,8 +20,22 @@ import { ThrowAxe } from '../abilities/ThrowAxe';
 import { Trap } from '../entities/Trap';
 import { Axe } from '../entities/Axe';
 import { audioManager } from '../audio/AudioManager';
+import { TICK_DURATION, KILLER_BASE_SPEED } from '../constants';
 
-const STATE_SEND_INTERVAL = 1 / 15; // 15Hz state updates
+const STATE_SEND_INTERVAL = 1 / 30; // 30Hz state updates (doubled from 15Hz)
+
+/** Buffered snapshot for entity interpolation */
+interface Snapshot {
+  time: number;
+  x: number;
+  y: number;
+  prevX: number;
+  prevY: number;
+  direction: number;
+  isMoving: boolean;
+  walking: boolean;
+  animTime: number;
+}
 
 export class OnlineGame {
   game: Game;
@@ -37,6 +52,20 @@ export class OnlineGame {
   // Track pressed state for guest (convert held→pressed)
   private guestPrevInteract = false;
   private guestPrevAbility = false;
+
+  // ─── Guest-side prediction & interpolation ───
+  /** Last input sent by guest (for local prediction) */
+  private lastLocalInput = { dx: 0, dy: 0, walk: false };
+  /** Interpolation buffer for survivor (opponent) on guest side */
+  private survivorSnapshots: Snapshot[] = [];
+  /** Time tracking for interpolation */
+  private interpTime = 0;
+  /** Interpolation delay (renders slightly in the past for smoothness) */
+  private readonly INTERP_DELAY = 0.1; // 100ms delay = ~3 snapshots at 30Hz
+  /** Blend factor for server reconciliation (0=snap, 1=ignore server) */
+  private readonly RECONCILE_BLEND = 0.3; // blend 30% toward server each update
+  /** Last state tick received */
+  private lastReceivedTick = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -90,8 +119,9 @@ export class OnlineGame {
   update(dt: number): void {
     if (this.isHost) {
       this.updateHost(dt);
+    } else {
+      this.updateGuest(dt);
     }
-    // Guest doesn't call game.update(); it applies received state
   }
 
   private updateHost(dt: number): void {
@@ -109,6 +139,85 @@ export class OnlineGame {
       this.tick++;
       this.sendState();
     }
+  }
+
+  /** Guest-side update: predict own character movement locally */
+  private updateGuest(dt: number): void {
+    this.interpTime += dt;
+
+    const k = this.game.killer;
+
+    // Skip prediction if stunned or game not playing
+    if (k.stunTimer > 0 || this.game.phase !== GamePhase.Playing) return;
+
+    // Client-side prediction: move killer locally based on last input
+    const { dx, dy, walk } = this.lastLocalInput;
+    if (dx !== 0 || dy !== 0) {
+      k.walking = walk;
+      k.move(dx, dy, dt, this.game.map);
+
+      // Update fog and camera to follow predicted position
+      this.game.killerFog.update(k.centerX, k.centerY);
+      this.game.killerCamera.follow({ x: k.centerX, y: k.centerY });
+    } else {
+      // Sync prev when idle
+      k.prevX = k.pos.x;
+      k.prevY = k.pos.y;
+    }
+
+    // Interpolate survivor position from buffer
+    this.interpolateSurvivor();
+  }
+
+  /** Interpolate survivor between buffered snapshots */
+  private interpolateSurvivor(): void {
+    const snapshots = this.survivorSnapshots;
+    if (snapshots.length < 2) return;
+
+    const s = this.game.survivor;
+    // Render time is slightly in the past
+    const renderTime = this.interpTime - this.INTERP_DELAY;
+
+    // Find the two snapshots to interpolate between
+    let from: Snapshot | null = null;
+    let to: Snapshot | null = null;
+
+    for (let i = 0; i < snapshots.length - 1; i++) {
+      if (snapshots[i].time <= renderTime && snapshots[i + 1].time >= renderTime) {
+        from = snapshots[i];
+        to = snapshots[i + 1];
+        break;
+      }
+    }
+
+    if (from && to) {
+      const duration = to.time - from.time;
+      const t = duration > 0 ? Math.min(1, (renderTime - from.time) / duration) : 1;
+
+      s.prevX = s.pos.x;
+      s.prevY = s.pos.y;
+      s.pos.x = from.x + (to.x - from.x) * t;
+      s.pos.y = from.y + (to.y - from.y) * t;
+      s.isMoving = to.isMoving;
+      s.walking = to.walking;
+      s.direction = numToDir(to.direction) as Direction;
+      s.animTime = from.animTime + (to.animTime - from.animTime) * t;
+    } else if (snapshots.length > 0) {
+      // Extrapolate from last snapshot
+      const last = snapshots[snapshots.length - 1];
+      s.direction = numToDir(last.direction) as Direction;
+      s.isMoving = last.isMoving;
+      s.walking = last.walking;
+    }
+
+    // Prune old snapshots (keep last 1 second worth)
+    while (snapshots.length > 2 && snapshots[0].time < renderTime - 1.0) {
+      snapshots.shift();
+    }
+
+    // Update survivor fog and camera
+    this.game.survivorFog.update(s.centerX, s.centerY);
+    this.game.survivorCamera.follow({ x: s.centerX, y: s.centerY });
   }
 
   private injectGuestInputs(): void {
@@ -149,6 +258,9 @@ export class OnlineGame {
     if (input.isDown('KeyS')) dy += 1;
     if (input.isDown('KeyA')) dx -= 1;
     if (input.isDown('KeyD')) dx += 1;
+
+    // Store for local prediction
+    this.lastLocalInput = { dx, dy, walk: input.isDown('ShiftLeft') };
 
     const msg: NetInput = {
       type: 'input',
@@ -235,20 +347,46 @@ export class OnlineGame {
     if (state.sId) s.characterId = state.sId;
     if (state.kId) k.characterId = state.kId;
 
-    // Survivor
+    // ─── Survivor: buffer for interpolation ───
     const sd = state.s;
-    s.pos.x = sd[0]; s.pos.y = sd[1];
-    s.prevX = sd[2]; s.prevY = sd[3];
+    this.survivorSnapshots.push({
+      time: this.interpTime,
+      x: sd[0],
+      y: sd[1],
+      prevX: sd[2],
+      prevY: sd[3],
+      direction: sd[5],
+      isMoving: sd[6] === 1,
+      walking: sd[7] === 1,
+      animTime: sd[8],
+    });
+    // Apply non-positional survivor state immediately
     s.health = numToHealth(sd[4]) as HealthState;
-    s.direction = numToDir(sd[5]) as Direction;
-    s.isMoving = sd[6] === 1;
-    s.walking = sd[7] === 1;
-    s.animTime = sd[8];
 
-    // Killer
+    // ─── Killer: server reconciliation (blend toward authoritative position) ───
     const kd = state.k;
-    k.pos.x = kd[0]; k.pos.y = kd[1];
-    k.prevX = kd[2]; k.prevY = kd[3];
+    const serverX = kd[0];
+    const serverY = kd[1];
+
+    // Blend current predicted position toward server position
+    const blend = this.RECONCILE_BLEND;
+    const errorX = serverX - k.pos.x;
+    const errorY = serverY - k.pos.y;
+    const errorDist = Math.sqrt(errorX * errorX + errorY * errorY);
+
+    if (errorDist > 100) {
+      // Large error: snap to server position (teleport/major desync)
+      k.pos.x = serverX;
+      k.pos.y = serverY;
+      k.prevX = kd[2];
+      k.prevY = kd[3];
+    } else if (errorDist > 2) {
+      // Small-medium error: blend toward server
+      k.pos.x += errorX * blend;
+      k.pos.y += errorY * blend;
+    }
+    // If error <= 2px, don't correct (prediction is close enough)
+
     k.direction = numToDir(kd[4]) as Direction;
     k.isMoving = kd[5] === 1;
     k.walking = kd[6] === 1;
@@ -342,6 +480,8 @@ export class OnlineGame {
     // Also update survivor fog for rendering consistency
     g.survivorFog.update(s.centerX, s.centerY);
     g.survivorCamera.follow({ x: s.centerX, y: s.centerY });
+
+    this.lastReceivedTick = state.tick;
   }
 
   private playSound(name: string): void {
