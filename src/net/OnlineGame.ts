@@ -376,7 +376,7 @@ export class OnlineGame {
         trapAbility.traps[i].pos.x = td[0];
         trapAbility.traps[i].pos.y = td[1];
         trapAbility.traps[i].armed = td[2] === 1;
-        trapAbility.traps[i].trapped = td[3] === 1 ? s : null;
+        trapAbility.traps[i].trapped = td[3] === 1 ? s : td[3] === 2 ? s2 : null;
       });
     }
 

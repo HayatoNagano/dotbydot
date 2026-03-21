@@ -91,7 +91,7 @@ export function serializeGameState(
     gt: game.exitGates.map((gt) => [gt.powered ? 1 : 0, gt.isOpen ? 1 : 0, r(gt.openProgress)]),
     l: game.lockers.map((loc) => loc.occupant === s ? 1 : loc.occupant === s2 ? 2 : 0),
     tr: (game.killerAbility instanceof TrapAbility ? (game.killerAbility as TrapAbility).traps : [])
-      .map((t) => [r(t.pos.x), r(t.pos.y), t.armed ? 1 : 0, t.trapped ? 1 : 0]),
+      .map((t) => [r(t.pos.x), r(t.pos.y), t.armed ? 1 : 0, t.trapped === s ? 1 : t.trapped === s2 ? 2 : 0]),
     ax: (game.killerAbility instanceof ThrowAxe ? (game.killerAbility as ThrowAxe).axes : [])
       .filter((a) => a.alive)
       .map((a) => [r(a.pos.x), r(a.pos.y), a.alive ? 1 : 0]),
