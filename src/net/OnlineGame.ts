@@ -290,9 +290,11 @@ export class OnlineGame {
     // ─── Remote characters: buffer for interpolation ───
     this.bufferRemoteCharacters(state);
 
-    // Killer carrying state
+    // Killer carrying state — k[9]: 0=none, 1=survivor1, 2=survivor2
     if (state.k[9] === 1) {
-      k.carrying = s.health === HealthState.Dying ? s : s2;
+      k.carrying = s;
+    } else if (state.k[9] === 2) {
+      k.carrying = s2;
     } else {
       k.carrying = null;
     }
@@ -309,15 +311,13 @@ export class OnlineGame {
       }
     });
 
-    // Hooks
+    // Hooks — hd[0]: 0=empty, 1=survivor1, 2=survivor2
     state.h.forEach((hd, i) => {
       if (i < g.hooks.length) {
         if (hd[0] === 1) {
-          const hookX = g.hooks[i].pos.x;
-          const hookY = g.hooks[i].pos.y;
-          const d1 = Math.abs(s.pos.x - hookX) + Math.abs(s.pos.y - hookY);
-          const d2 = Math.abs(s2.pos.x - hookX) + Math.abs(s2.pos.y - hookY);
-          g.hooks[i].hooked = d1 < d2 ? s : s2;
+          g.hooks[i].hooked = s;
+        } else if (hd[0] === 2) {
+          g.hooks[i].hooked = s2;
         } else {
           g.hooks[i].hooked = null;
         }
@@ -466,15 +466,11 @@ export class OnlineGame {
       // Check if survivor cannot move: incapacitated, hooked, carried, or in locker
       const myLockerVal = this.myRole === 'survivor1' ? 1 : 2;
       const isInLocker = state.l.some((v) => v === myLockerVal);
-      const isCarried = state.k[9] === 1 && mySurvivor.health === HealthState.Dying;
-      // Check if any hook holds a survivor near my server position
-      const isHooked = state.h.some((hd, i) => {
-        if (hd[0] !== 1) return false;
-        const hook = this.game.hooks[i];
-        if (!hook) return false;
-        const dist = Math.abs(serverX - hook.pos.x) + Math.abs(serverY - hook.pos.y);
-        return dist < 48; // within 1 tile
-      });
+      const myCarryVal = this.myRole === 'survivor1' ? 1 : 2;
+      const isCarried = state.k[9] === myCarryVal;
+      // Check if any hook holds my survivor (hd[0]: 1=s1, 2=s2)
+      const myHookVal = this.myRole === 'survivor1' ? 1 : 2;
+      const isHooked = state.h.some((hd) => hd[0] === myHookVal);
 
       if (mySurvivor.isIncapacitated || isHooked || isCarried || isInLocker) {
         mySurvivor.pos.x = serverX;

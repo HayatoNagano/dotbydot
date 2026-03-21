@@ -83,10 +83,10 @@ export function serializeGameState(
     k: [
       r2(k.pos.x), r2(k.pos.y), r(k.prevX), r(k.prevY),
       dirToNum(k.direction), k.isMoving ? 1 : 0, k.walking ? 1 : 0,
-      r(k.stunTimer), r(k.attackCooldown), k.isCarrying ? 1 : 0, r(k.animTime),
+      r(k.stunTimer), r(k.attackCooldown), k.carrying === s ? 1 : k.carrying === s2 ? 2 : 0, r(k.animTime),
     ],
     g: game.generators.map((gen) => [r(gen.progress), gen.completed ? 1 : 0, gen.beingRepaired ? 1 : 0, gen.regressing ? 1 : 0]),
-    h: game.hooks.map((h) => [h.hooked ? 1 : 0, h.stage, r(h.stageTimer), h.canSelfUnhook ? 1 : 0, r(h.rescueProgress), r(h.selfUnhookProgress)]),
+    h: game.hooks.map((h) => [h.hooked === s ? 1 : h.hooked === s2 ? 2 : 0, h.stage, r(h.stageTimer), h.canSelfUnhook ? 1 : 0, r(h.rescueProgress), r(h.selfUnhookProgress)]),
     p: game.pallets.map((p) => [p.dropped ? 1 : 0, p.isDestroyed ? 1 : 0, r(p.pos.x), r(p.pos.y), p.width, p.height]),
     gt: game.exitGates.map((gt) => [gt.powered ? 1 : 0, gt.isOpen ? 1 : 0, r(gt.openProgress)]),
     l: game.lockers.map((loc) => loc.occupant === s ? 1 : loc.occupant === s2 ? 2 : 0),
