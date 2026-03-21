@@ -75,6 +75,9 @@ export class OnlineGame {
   private localTick = 0;
   private predictionBuffer: PredictionEntry[] = [];
   private readonly MAX_PREDICTION_BUFFER = 600; // 10s at 60Hz
+  /** Visual smoothing: offset that absorbs reconciliation jumps and decays over time */
+  private smoothOffsetX = 0;
+  private smoothOffsetY = 0;
   /** Interpolation buffers for remote characters on guest side */
   private killerSnapshots: Snapshot[] = [];
   private survivorSnapshots: Snapshot[] = []; // the OTHER survivor
@@ -191,6 +194,12 @@ export class OnlineGame {
   /** Guest-side update: predict own survivor movement locally */
   private updateGuest(dt: number): void {
     this.interpTime += dt;
+
+    // Decay visual smooth offset each tick
+    this.smoothOffsetX *= 0.85;
+    this.smoothOffsetY *= 0.85;
+    if (Math.abs(this.smoothOffsetX) < 0.1) this.smoothOffsetX = 0;
+    if (Math.abs(this.smoothOffsetY) < 0.1) this.smoothOffsetY = 0;
 
     if (this.game.phase !== GamePhase.Playing) return;
 
@@ -387,6 +396,11 @@ export class OnlineGame {
     return Math.round(n * 10) / 10;
   }
 
+  /** Round to 2 decimal places for player positions (higher precision for replay) */
+  private r2(n: number): number {
+    return Math.round(n * 100) / 100;
+  }
+
   private sendState(): void {
     const g = this.game;
     const s = g.survivor;
@@ -411,12 +425,12 @@ export class OnlineGame {
       s2Id: s2.characterId,
       kId: k.characterId,
       s: [
-        r(s.pos.x), r(s.pos.y), r(s.prevX), r(s.prevY),
+        this.r2(s.pos.x), this.r2(s.pos.y), r(s.prevX), r(s.prevY),
         healthToNum(s.health), dirToNum(s.direction),
         s.isMoving ? 1 : 0, s.walking ? 1 : 0, r(s.animTime),
       ],
       s2: [
-        r(s2.pos.x), r(s2.pos.y), r(s2.prevX), r(s2.prevY),
+        this.r2(s2.pos.x), this.r2(s2.pos.y), r(s2.prevX), r(s2.prevY),
         healthToNum(s2.health), dirToNum(s2.direction),
         s2.isMoving ? 1 : 0, s2.walking ? 1 : 0, r(s2.animTime),
       ],
@@ -517,7 +531,13 @@ export class OnlineGame {
       mySurvivor.isMoving = myData[6] === 1;
       mySurvivor.walking = myData[7] === 1;
       this.predictionBuffer.length = 0;
+      this.smoothOffsetX = 0;
+      this.smoothOffsetY = 0;
     } else {
+      // Save position before reconciliation for visual smoothing
+      const beforeX = mySurvivor.pos.x;
+      const beforeY = mySurvivor.pos.y;
+
       // Discard acknowledged prediction entries
       const ackTick = this.guestIndex === 0 ? state.ackTick : state.ackTick2;
       while (this.predictionBuffer.length > 0 && this.predictionBuffer[0].tick <= ackTick) {
@@ -537,6 +557,20 @@ export class OnlineGame {
       }
       mySurvivor.prevX = replayPrevX;
       mySurvivor.prevY = replayPrevY;
+
+      // Visual smoothing: absorb the position jump into an offset that decays over time
+      const jumpX = mySurvivor.pos.x - beforeX;
+      const jumpY = mySurvivor.pos.y - beforeY;
+      const jumpDist = Math.sqrt(jumpX * jumpX + jumpY * jumpY);
+      if (jumpDist < 50) {
+        // Small correction: smooth it visually
+        this.smoothOffsetX -= jumpX;
+        this.smoothOffsetY -= jumpY;
+      } else {
+        // Large correction (teleport/stun): snap immediately
+        this.smoothOffsetX = 0;
+        this.smoothOffsetY = 0;
+      }
     }
 
     // ─── Other Survivor: buffer for interpolation ───
@@ -676,7 +710,26 @@ export class OnlineGame {
   }
 
   render(alpha: number): void {
-    this.game.render(alpha);
+    if (!this.isHost && (this.smoothOffsetX !== 0 || this.smoothOffsetY !== 0)) {
+      const mySurvivor = this.guestIndex === 0 ? this.game.survivor : this.game.survivor2;
+      // Temporarily apply visual offset for smooth rendering
+      mySurvivor.pos.x += this.smoothOffsetX;
+      mySurvivor.pos.y += this.smoothOffsetY;
+      mySurvivor.prevX += this.smoothOffsetX;
+      mySurvivor.prevY += this.smoothOffsetY;
+      // Re-follow camera so the whole view shifts smoothly
+      this.game.survivorCamera.follow({ x: mySurvivor.centerX, y: mySurvivor.centerY });
+
+      this.game.render(alpha);
+
+      // Restore game-logic positions
+      mySurvivor.pos.x -= this.smoothOffsetX;
+      mySurvivor.pos.y -= this.smoothOffsetY;
+      mySurvivor.prevX -= this.smoothOffsetX;
+      mySurvivor.prevY -= this.smoothOffsetY;
+    } else {
+      this.game.render(alpha);
+    }
   }
 
   get phase(): GamePhase {

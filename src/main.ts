@@ -231,11 +231,11 @@ const loop = new GameLoop(
           input.endFrame();
           return;
         }
-        // Online mode
-        onlineGame.update(dt);
+        // Online mode: read input BEFORE update so prediction uses same input as sent message
         if (menu.onlineRole === 'guest') {
           onlineGame.sendInput(input, dt);
         }
+        onlineGame.update(dt);
       } else {
         // Local mode
         game.update(dt);
