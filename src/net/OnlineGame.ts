@@ -410,18 +410,21 @@ export class OnlineGame {
       }
     }
 
-    // Ability cooldowns
+    // Ability state sync — activate/deactivate to match server
     if (g.survivorAbility) {
       g.survivorAbility.cooldownRemaining = state.sa[0];
-      if (state.sa[1] === 1 && !g.survivorAbility.isActive) g.survivorAbility.activate();
+      if (state.sa[1] === 1 && !g.survivorAbility.isActive) g.survivorAbility.forceActivate();
+      else if (state.sa[1] === 0 && g.survivorAbility.isActive) g.survivorAbility.deactivate();
     }
     if (g.survivor2Ability) {
       g.survivor2Ability.cooldownRemaining = state.s2a[0];
-      if (state.s2a[1] === 1 && !g.survivor2Ability.isActive) g.survivor2Ability.activate();
+      if (state.s2a[1] === 1 && !g.survivor2Ability.isActive) g.survivor2Ability.forceActivate();
+      else if (state.s2a[1] === 0 && g.survivor2Ability.isActive) g.survivor2Ability.deactivate();
     }
     if (g.killerAbility) {
       g.killerAbility.cooldownRemaining = state.ka[0];
-      if (state.ka[1] === 1 && !g.killerAbility.isActive) g.killerAbility.activate();
+      if (state.ka[1] === 1 && !g.killerAbility.isActive) g.killerAbility.forceActivate();
+      else if (state.ka[1] === 0 && g.killerAbility.isActive) g.killerAbility.deactivate();
     }
 
     // Killer timers

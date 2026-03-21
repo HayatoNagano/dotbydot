@@ -56,7 +56,17 @@ export abstract class Ability {
     }
   }
 
-  protected deactivate(): void {
+  /** Force activation (bypasses isReady check, for network sync) */
+  forceActivate(): void {
+    if (this._isActive) return;
+    this._isActive = true;
+    this.activeTimer = this.duration;
+    this.onActivate();
+  }
+
+  /** Deactivate ability and start cooldown */
+  deactivate(): void {
+    if (!this._isActive) return;
     this._isActive = false;
     this.cooldownTimer = this.cooldown;
     this.onDeactivate();
