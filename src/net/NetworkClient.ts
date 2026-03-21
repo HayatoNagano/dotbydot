@@ -3,16 +3,20 @@
  * Handles connection, room management, and message relay.
  */
 
-import type { NetMessage } from './protocol';
+import type { NetMessage, OnlineRole } from './protocol';
 
 export type ServerMessage =
-  | { type: 'room_created'; code: string }
-  | { type: 'joined'; role: 'guest'; guestIndex: number }
-  | { type: 'player_joined'; playerCount: number; guestIndex: number }
-  | { type: 'player_left'; playerCount: number }
+  | { type: 'room_created'; code: string; role?: OnlineRole }
+  | { type: 'joined'; role: OnlineRole; playerCount: number }
+  | { type: 'player_joined'; playerCount: number; role: OnlineRole }
+  | { type: 'player_left'; playerCount: number; role: OnlineRole }
   | { type: 'player_count'; playerCount: number }
   | { type: 'opponent_left' }
   | { type: 'relay'; data: NetMessage; guestIndex?: number }
+  | { type: 'game_start'; seed: number; survivorDef: string; survivor2Def: string; killerDef: string; survivorColor: string; survivor2Color: string; killerColor: string }
+  | { type: 'char_select'; role: OnlineRole; defId: string }
+  | { type: 'state'; [key: string]: unknown }
+  | { type: 'sound'; name: string }
   | { type: 'error'; message: string };
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001';
@@ -22,11 +26,10 @@ export class NetworkClient {
   private listeners: ((msg: ServerMessage) => void)[] = [];
   connected = false;
   roomCode: string | null = null;
-  role: 'host' | 'guest' | null = null;
+  /** Player's assigned role in the room */
+  myRole: OnlineRole | null = null;
   error: string | null = null;
-  /** Guest index (0=survivor1, 1=survivor2). Set when joining a room. */
-  guestIndex = 0;
-  /** Current player count in the room (host included) */
+  /** Current player count in the room */
   playerCount = 1;
 
   connect(): Promise<void> {
@@ -48,7 +51,7 @@ export class NetworkClient {
       this.ws.onclose = () => {
         this.connected = false;
         this.roomCode = null;
-        this.role = null;
+        this.myRole = null;
       };
 
       this.ws.onerror = () => {
@@ -71,12 +74,12 @@ export class NetworkClient {
     switch (msg.type) {
       case 'room_created':
         this.roomCode = msg.code;
-        this.role = 'host';
+        if (msg.role) this.myRole = msg.role;
         this.playerCount = 1;
         break;
       case 'joined':
-        this.role = 'guest';
-        this.guestIndex = msg.guestIndex;
+        this.myRole = msg.role;
+        this.playerCount = msg.playerCount;
         break;
       case 'player_joined':
         this.playerCount = msg.playerCount;
@@ -104,17 +107,22 @@ export class NetworkClient {
     this.listeners = this.listeners.filter((l) => l !== fn);
   }
 
-  createRoom(): void {
-    this.send({ type: 'create_room' });
+  createRoom(role: OnlineRole = 'killer'): void {
+    this.send({ type: 'create_room', role });
   }
 
   joinRoom(code: string): void {
     this.send({ type: 'join_room', code });
   }
 
-  /** Send a game message (wrapped in relay) */
+  /** Send a game message (wrapped in relay — legacy compat) */
   relay(data: NetMessage): void {
     this.send({ type: 'relay', data });
+  }
+
+  /** Send a message directly to the server */
+  sendDirect(msg: object): void {
+    this.send(msg);
   }
 
   private send(msg: object): void {
@@ -131,10 +139,9 @@ export class NetworkClient {
     }
     this.connected = false;
     this.roomCode = null;
-    this.role = null;
+    this.myRole = null;
     this.error = null;
     this.listeners = [];
     this.playerCount = 1;
-    this.guestIndex = 0;
   }
 }

@@ -35,37 +35,54 @@ window.addEventListener('click', initAudio);
 
 // ─── Online callbacks ───
 
-menu.onCreateRoom = async () => {
-  try {
-    netClient = new NetworkClient();
-    await netClient.connect();
-    netClient.createRoom();
-    netClient.onMessage((msg) => {
-      if (msg.type === 'room_created') {
+/** Shared message handler for online mode (both create & join) */
+function setupNetListeners(): void {
+  if (!netClient) return;
+  netClient.onMessage((msg) => {
+    switch (msg.type) {
+      case 'room_created':
         menu.roomCode = msg.code;
-      }
-      if (msg.type === 'player_joined') {
+        break;
+      case 'joined':
+        menu.opponentJoined = true;
+        break;
+      case 'player_joined':
         menu.playerCount = msg.playerCount;
-      }
-      if (msg.type === 'player_left') {
+        break;
+      case 'player_left':
         menu.playerCount = msg.playerCount;
-      }
-      if (msg.type === 'relay' && msg.data?.type === 'char_select') {
-        // Guest selected their survivor character — not used for game start flow
-        // but store for reference
-        menu.opponentCharDefId = msg.data.defId;
-      }
-      if (msg.type === 'error') {
+        break;
+      case 'player_count':
+        menu.playerCount = msg.playerCount;
+        break;
+      case 'char_select':
+        menu.opponentCharDefId = String(msg.defId);
+        break;
+      case 'game_start':
+        // Server started the game — trigger game creation
+        menu.gameStarted = true;
+        menu.serverGameStart = msg;
+        break;
+      case 'error':
         menu.onlineError = msg.message;
-      }
-      if (msg.type === 'opponent_left') {
+        break;
+      case 'opponent_left':
         if (game) {
           disconnectMessage = 'プレイヤーが切断しました';
         } else {
           menu.onlineError = 'プレイヤーが切断しました';
         }
-      }
-    });
+        break;
+    }
+  });
+}
+
+menu.onCreateRoom = async () => {
+  try {
+    netClient = new NetworkClient();
+    await netClient.connect();
+    netClient.createRoom('killer');
+    setupNetListeners();
   } catch {
     menu.onlineError = 'サーバーに接続できません';
     menu.state = MenuState.OnlineLobby;
@@ -77,53 +94,24 @@ menu.onJoinRoom = async (code: string) => {
     netClient = new NetworkClient();
     await netClient.connect();
     netClient.joinRoom(code);
-    netClient.onMessage((msg) => {
-      if (msg.type === 'joined') {
-        menu.opponentJoined = true;
-        menu.roomCode = code;
-        menu.guestIndex = (msg as { guestIndex?: number }).guestIndex ?? 0;
-      }
-      if (msg.type === 'player_count') {
-        menu.playerCount = msg.playerCount;
-      }
-      if (msg.type === 'relay' && msg.data?.type === 'char_select') {
-        // Host's killer character selection
-        menu.opponentCharDefId = msg.data.defId;
-      }
-      if (msg.type === 'relay' && msg.data?.type === 'start_game') {
-        // Host started the game
-        menu.gameStarted = true;
-      }
-      if (msg.type === 'error') {
-        menu.onlineError = msg.message;
-        menu.state = MenuState.OnlineJoinInput;
-      }
-      if (msg.type === 'opponent_left') {
-        if (game) {
-          disconnectMessage = 'ホストが切断しました';
-        } else {
-          menu.onlineError = 'ホストが切断しました';
-          menu.state = MenuState.OnlineLobby;
-        }
-      }
-    });
+    setupNetListeners();
   } catch {
     menu.onlineError = 'サーバーに接続できません';
     menu.state = MenuState.OnlineJoinInput;
   }
 };
 
-// Host starts the game — notify all guests
+// Host starts the game — send to server
 menu.onStartGame = () => {
   if (netClient) {
-    netClient.relay({ type: 'start_game' });
+    netClient.sendDirect({ type: 'start_game' });
   }
 };
 
-// Send char_select via relay
+// Send char_select directly
 menu.onCharSelect = (defId: string) => {
   if (netClient) {
-    netClient.relay({ type: 'char_select', defId });
+    netClient.sendDirect({ type: 'char_select', defId });
   }
 };
 
@@ -144,13 +132,14 @@ function cleanupOnline(): void {
   menu.playerCount = 1;
   menu.guestIndex = 0;
   menu.gameStarted = false;
+  menu.serverGameStart = null;
 }
 
 function returnToMenu(): void {
   audioManager.stopHeartbeat();
   audioManager.stopAmbient();
   audioManager.stopChase();
-  if (game) game.infoPanel.hide();
+  if (game) game.infoPanel?.hide();
   game = null;
   disconnectMessage = null;
   if (onlineGame) cleanupOnline();
@@ -231,10 +220,8 @@ const loop = new GameLoop(
           input.endFrame();
           return;
         }
-        // Online mode: read input BEFORE update so prediction uses same input as sent message
-        if (menu.onlineRole === 'guest') {
-          onlineGame.sendInput(input, dt);
-        }
+        // All clients send input and run prediction
+        onlineGame.sendInput(input, dt);
         onlineGame.update(dt);
       } else {
         // Local mode
@@ -251,11 +238,9 @@ const loop = new GameLoop(
         audioManager.stopMenuBGM();
         audioManager.stopCampfire();
 
-        if (selection.mode === GameMode.Online && netClient) {
-          // Online game
-          const isHost = menu.onlineRole === 'host';
-          const guestIndex = menu.guestIndex;
-          onlineGame = new OnlineGame(canvas, input, selection, netClient, isHost, guestIndex);
+        if (selection.mode === GameMode.Online && netClient && netClient.myRole) {
+          // Online game — all players are equal clients
+          onlineGame = new OnlineGame(canvas, input, selection, netClient, netClient.myRole);
           game = onlineGame.game;
           audioManager.startAmbient();
         } else {

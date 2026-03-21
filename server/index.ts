@@ -1,18 +1,35 @@
+/**
+ * dot by dot — Dedicated game server
+ *
+ * Manages rooms, runs headless Game simulations, and broadcasts
+ * state to all connected clients. All players are equal clients.
+ */
+
 import { WebSocketServer, WebSocket } from 'ws';
+import { ServerRoom } from './ServerRoom';
+import { OnlineRole, NetInput, NetSkillCheckResult } from '../src/net/protocol';
 
 const PORT = Number(process.env.PORT) || 3001;
-const MAX_GUESTS = 2;
-const PING_INTERVAL = 25_000; // 25s — keep alive under Render's 60s timeout
+const MAX_PLAYERS = 3; // 1 killer + 2 survivors
+const PING_INTERVAL = 25_000;
+
+interface PlayerSlot {
+  ws: WebSocket;
+  role: OnlineRole;
+  charDefId: string | null;
+  ready: boolean;
+}
 
 interface Room {
   code: string;
-  host: WebSocket;
-  guests: WebSocket[];
+  hostWs: WebSocket; // The player who created the room (manages lobby)
+  players: PlayerSlot[];
+  serverRoom: ServerRoom | null; // null until game starts
 }
 
 const rooms = new Map<string, Room>();
-/** Map from WebSocket to its guest index within the room */
-const guestIndices = new Map<WebSocket, number>();
+/** Map from WebSocket to its room and slot */
+const playerMap = new Map<WebSocket, { room: Room; slot: PlayerSlot }>();
 
 function generateCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -30,7 +47,6 @@ function sendJSON(ws: WebSocket, msg: object): void {
   }
 }
 
-/** Send a pre-serialized string (avoids re-stringify) */
 function sendRaw(ws: WebSocket, data: string): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(data);
@@ -40,14 +56,13 @@ function sendRaw(ws: WebSocket, data: string): void {
 const wss = new WebSocketServer({
   port: PORT,
   perMessageDeflate: {
-    zlibDeflateOptions: { level: 1 }, // fast compression
-    threshold: 128, // only compress messages > 128 bytes
+    zlibDeflateOptions: { level: 1 },
+    threshold: 128,
   },
 });
 
-// ─── Ping/pong keepalive (prevents Render from closing idle connections) ───
+// ─── Ping/pong keepalive ───
 const aliveSet = new Set<WebSocket>();
-
 const pingTimer = setInterval(() => {
   for (const ws of wss.clients) {
     if (!aliveSet.has(ws)) {
@@ -65,9 +80,6 @@ wss.on('connection', (ws) => {
   aliveSet.add(ws);
   ws.on('pong', () => aliveSet.add(ws));
 
-  let myRoom: Room | null = null;
-  let myRole: 'host' | 'guest' | null = null;
-
   ws.on('message', (raw) => {
     const str = typeof raw === 'string' ? raw : String(raw);
     let msg: { type: string; [key: string]: unknown };
@@ -80,12 +92,13 @@ wss.on('connection', (ws) => {
     switch (msg.type) {
       case 'create_room': {
         const code = generateCode();
-        const room: Room = { code, host: ws, guests: [] };
+        const role = (msg.role as OnlineRole) || 'killer';
+        const slot: PlayerSlot = { ws, role, charDefId: null, ready: false };
+        const room: Room = { code, hostWs: ws, players: [slot], serverRoom: null };
         rooms.set(code, room);
-        myRoom = room;
-        myRole = 'host';
-        sendJSON(ws, { type: 'room_created', code });
-        console.log(`Room ${code} created`);
+        playerMap.set(ws, { room, slot });
+        sendJSON(ws, { type: 'room_created', code, role });
+        console.log(`Room ${code} created (${role})`);
         break;
       }
 
@@ -96,86 +109,237 @@ wss.on('connection', (ws) => {
           sendJSON(ws, { type: 'error', message: '部屋が見つかりません' });
           break;
         }
-        if (room.guests.length >= MAX_GUESTS) {
+        if (room.serverRoom) {
+          sendJSON(ws, { type: 'error', message: 'ゲームは既に開始しています' });
+          break;
+        }
+        if (room.players.length >= MAX_PLAYERS) {
           sendJSON(ws, { type: 'error', message: '部屋が満員です' });
           break;
         }
-        const guestIndex = room.guests.length;
-        room.guests.push(ws);
-        guestIndices.set(ws, guestIndex);
-        myRoom = room;
-        myRole = 'guest';
-        sendJSON(ws, { type: 'joined', role: 'guest', guestIndex });
-        // Notify host of player count
-        const playerCount = 1 + room.guests.length;
-        sendJSON(room.host, { type: 'player_joined', playerCount, guestIndex });
-        // Notify all existing guests of player count
-        for (const g of room.guests) {
-          sendJSON(g, { type: 'player_count', playerCount });
+
+        // Assign role: first available survivor slot, then killer
+        const takenRoles = new Set(room.players.map((p) => p.role));
+        let role: OnlineRole;
+        if (!takenRoles.has('survivor1')) role = 'survivor1';
+        else if (!takenRoles.has('survivor2')) role = 'survivor2';
+        else if (!takenRoles.has('killer')) role = 'killer';
+        else {
+          sendJSON(ws, { type: 'error', message: '部屋が満員です' });
+          break;
         }
-        console.log(`Room ${code}: guest ${guestIndex} joined (${playerCount}/3)`);
+
+        const slot: PlayerSlot = { ws, role, charDefId: null, ready: false };
+        room.players.push(slot);
+        playerMap.set(ws, { room, slot });
+
+        const playerCount = room.players.length;
+        sendJSON(ws, { type: 'joined', role, playerCount });
+
+        // Notify all other players
+        for (const p of room.players) {
+          if (p.ws !== ws) {
+            sendJSON(p.ws, { type: 'player_joined', playerCount, role });
+          }
+        }
+
+        // Send existing char selections to the new player
+        for (const p of room.players) {
+          if (p.ws !== ws && p.charDefId) {
+            sendJSON(ws, { type: 'char_select', role: p.role, defId: p.charDefId });
+          }
+        }
+
+        console.log(`Room ${code}: ${role} joined (${playerCount}/${MAX_PLAYERS})`);
         break;
       }
 
-      case 'relay': {
-        if (!myRoom) break;
-        if (myRole === 'host') {
-          // Host → guests: forward the raw relay payload without re-serializing
-          // Build a minimal wrapper with pre-serialized inner data
-          const innerJson = JSON.stringify(msg.data);
-          const wrapped = `{"type":"relay","data":${innerJson}}`;
-          for (const g of myRoom.guests) {
-            sendRaw(g, wrapped);
+      case 'char_select': {
+        const info = playerMap.get(ws);
+        if (!info) break;
+        info.slot.charDefId = String(msg.defId);
+        // Broadcast to other players
+        for (const p of info.room.players) {
+          if (p.ws !== ws) {
+            sendJSON(p.ws, { type: 'char_select', role: info.slot.role, defId: msg.defId });
           }
+        }
+        break;
+      }
+
+      case 'start_game': {
+        const info = playerMap.get(ws);
+        if (!info || info.room.serverRoom) break;
+        // Only the host can start the game
+        if (ws !== info.room.hostWs) break;
+
+        const room = info.room;
+        // Need at least 2 players (1 killer + 1 survivor)
+        const hasKiller = room.players.some((p) => p.role === 'killer');
+        const hasSurvivor = room.players.some((p) => p.role === 'survivor1' || p.role === 'survivor2');
+        if (!hasKiller || !hasSurvivor) {
+          sendJSON(ws, { type: 'error', message: 'キラーとサバイバーが必要です' });
+          break;
+        }
+
+        // Build selection from char picks (defaults if not selected)
+        const killerSlot = room.players.find((p) => p.role === 'killer');
+        const s1Slot = room.players.find((p) => p.role === 'survivor1');
+        const s2Slot = room.players.find((p) => p.role === 'survivor2');
+
+        const selection = ServerRoom.buildSelection(
+          s1Slot?.charDefId ?? 'sprint_burst',
+          s2Slot?.charDefId ?? 'dead_hard',
+          killerSlot?.charDefId ?? 'trap',
+        );
+
+        // Create ServerRoom with headless game
+        room.serverRoom = new ServerRoom(selection, {
+          sendState: (_role, state) => {
+            const p = room.players.find((pl) => pl.role === _role);
+            if (p) sendJSON(p.ws, state);
+          },
+          broadcastState: (state) => {
+            const data = JSON.stringify(state);
+            for (const p of room.players) {
+              sendRaw(p.ws, data);
+            }
+          },
+          broadcastSound: (name) => {
+            const data = JSON.stringify({ type: 'sound', name });
+            for (const p of room.players) {
+              sendRaw(p.ws, data);
+            }
+          },
+        });
+
+        // Notify all clients
+        const seed = room.serverRoom.game.map.seed;
+        for (const p of room.players) {
+          sendJSON(p.ws, {
+            type: 'game_start',
+            seed,
+            survivorDef: selection.survivorDef.abilityName,
+            survivor2Def: selection.survivor2Def.abilityName,
+            killerDef: selection.killerDef.abilityName,
+            survivorColor: selection.survivorDef.color,
+            survivor2Color: selection.survivor2Def.color,
+            killerColor: selection.killerDef.color,
+          });
+        }
+
+        console.log(`Room ${room.code}: game started`);
+        break;
+      }
+
+      case 'input': {
+        const info = playerMap.get(ws);
+        if (!info || !info.room.serverRoom) break;
+        info.room.serverRoom.setInput(info.slot.role, msg as unknown as NetInput);
+        break;
+      }
+
+      case 'sc_result': {
+        const info = playerMap.get(ws);
+        if (!info || !info.room.serverRoom) break;
+        const data = msg as unknown as NetSkillCheckResult;
+        info.room.serverRoom.applySkillCheckResult(info.slot.role, data.result);
+        break;
+      }
+
+      // ─── Legacy relay support (for backward compat during transition) ───
+      case 'relay': {
+        const info = playerMap.get(ws);
+        if (!info) break;
+        const room = info.room;
+        const innerData = msg.data as { type: string; [key: string]: unknown } | undefined;
+        if (!innerData) break;
+
+        // Forward char_select and start_game via relay for menu phase
+        if (innerData.type === 'char_select') {
+          info.slot.charDefId = String(innerData.defId);
+          for (const p of room.players) {
+            if (p.ws !== ws) {
+              sendJSON(p.ws, { type: 'relay', data: innerData });
+            }
+          }
+        } else if (innerData.type === 'start_game') {
+          for (const p of room.players) {
+            if (p.ws !== ws) {
+              sendJSON(p.ws, { type: 'relay', data: innerData });
+            }
+          }
+        } else if (innerData.type === 'input' && room.serverRoom) {
+          // Input via relay → convert to direct input
+          room.serverRoom.setInput(info.slot.role, innerData as unknown as NetInput);
+        } else if (innerData.type === 'sc_result' && room.serverRoom) {
+          const scData = innerData as unknown as NetSkillCheckResult;
+          room.serverRoom.applySkillCheckResult(info.slot.role, scData.result);
         } else {
-          // Guest → host: tag with guestIndex, forward efficiently
-          const gi = guestIndices.get(ws) ?? 0;
-          const innerJson = JSON.stringify(msg.data);
-          const wrapped = `{"type":"relay","data":${innerJson},"guestIndex":${gi}}`;
-          sendRaw(myRoom.host, wrapped);
+          // Generic relay forward
+          const wrapped = JSON.stringify({ type: 'relay', data: innerData });
+          for (const p of room.players) {
+            if (p.ws !== ws) {
+              sendRaw(p.ws, wrapped);
+            }
+          }
         }
         break;
       }
 
       case 'leave': {
-        cleanup();
+        cleanup(ws);
         break;
       }
     }
   });
 
-  ws.on('close', cleanup);
-  ws.on('error', cleanup);
-
-  function cleanup(): void {
-    if (!myRoom) return;
-    const room = myRoom;
-    const code = room.code;
-    myRoom = null;
-    aliveSet.delete(ws);
-
-    if (myRole === 'host') {
-      // Host left: notify all guests and delete room
-      for (const g of room.guests) {
-        sendJSON(g, { type: 'opponent_left' });
-        guestIndices.delete(g);
-      }
-      rooms.delete(code);
-    } else if (myRole === 'guest') {
-      // Guest left: remove from array, notify host
-      const idx = room.guests.indexOf(ws);
-      if (idx >= 0) room.guests.splice(idx, 1);
-      guestIndices.delete(ws);
-      const playerCount = 1 + room.guests.length;
-      sendJSON(room.host, { type: 'player_left', playerCount });
-      // Notify remaining guests
-      for (const g of room.guests) {
-        sendJSON(g, { type: 'player_count', playerCount });
-      }
-    }
-    console.log(`Room ${code}: ${myRole} left`);
-    myRole = null;
-  }
+  ws.on('close', () => cleanup(ws));
+  ws.on('error', () => cleanup(ws));
 });
 
-console.log(`dot by dot relay server running on ws://localhost:${PORT}`);
+function cleanup(ws: WebSocket): void {
+  const info = playerMap.get(ws);
+  if (!info) return;
+  const { room, slot } = info;
+  playerMap.delete(ws);
+  aliveSet.delete(ws);
+
+  const idx = room.players.indexOf(slot);
+  if (idx >= 0) room.players.splice(idx, 1);
+
+  const playerCount = room.players.length;
+
+  if (playerCount === 0) {
+    // No players left — destroy room
+    if (room.serverRoom) room.serverRoom.destroy();
+    rooms.delete(room.code);
+    console.log(`Room ${room.code}: destroyed (empty)`);
+  } else {
+    // Notify remaining players
+    for (const p of room.players) {
+      sendJSON(p.ws, { type: 'player_left', playerCount, role: slot.role });
+    }
+
+    // If host left, promote first remaining player
+    if (ws === room.hostWs && room.players.length > 0) {
+      room.hostWs = room.players[0].ws;
+    }
+
+    // If game was running and too few players, stop the game
+    if (room.serverRoom) {
+      const hasKiller = room.players.some((p) => p.role === 'killer');
+      const hasSurvivor = room.players.some((p) => p.role === 'survivor1' || p.role === 'survivor2');
+      if (!hasKiller || !hasSurvivor) {
+        // Notify disconnect
+        for (const p of room.players) {
+          sendJSON(p.ws, { type: 'opponent_left' });
+        }
+      }
+    }
+
+    console.log(`Room ${room.code}: ${slot.role} left (${playerCount} remaining)`);
+  }
+}
+
+console.log(`dot by dot dedicated server running on ws://localhost:${PORT}`);

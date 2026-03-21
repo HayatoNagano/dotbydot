@@ -6,7 +6,10 @@ import { renderCampfireScene } from '../rendering/CampfireScene';
 import { resetStoryScene, updateStoryScene, renderStoryScene } from '../rendering/StoryScene';
 import { Survivor } from '../entities/Survivor';
 import { Killer } from '../entities/Killer';
-import { Direction } from '../types';
+import { Direction, GameMode, PlayerRole, CharacterDef, SURVIVOR_DEFS, KILLER_DEFS, type MenuSelection } from '../types';
+
+export { GameMode, PlayerRole, SURVIVOR_DEFS, KILLER_DEFS };
+export type { CharacterDef, MenuSelection };
 
 export enum MenuState {
   Title = 'title',
@@ -23,44 +26,6 @@ export enum MenuState {
   OnlineJoinInput = 'online_join_input',
   OnlineReady = 'online_ready',
   OnlineCharWait = 'online_char_wait',
-}
-
-export enum GameMode {
-  VsCPU = 'vs_cpu',
-  Online = 'online',
-}
-
-export enum PlayerRole {
-  Survivor = 'survivor',
-  Killer = 'killer',
-}
-
-export interface CharacterDef {
-  id: string;
-  name: string;
-  nameJp: string;
-  description: string;
-  color: string;
-  abilityName: string;
-}
-
-export const SURVIVOR_DEFS: CharacterDef[] = [
-  { id: 'runner', name: 'Dwight', nameJp: 'ドワット', description: 'スプリントバースト: 3秒間 速度2倍 (CT 40秒)', color: '#00ff88', abilityName: 'sprint_burst' },
-  { id: 'dodger', name: 'Fenley', nameJp: 'フェンリー', description: 'デッドハード: 0.5秒 無敵ダッシュ (CT 60秒)', color: '#00ccff', abilityName: 'dead_hard' },
-];
-
-export const KILLER_DEFS: CharacterDef[] = [
-  { id: 'trapper', name: 'Trapper', nameJp: 'トラッパー', description: 'ベアトラップ: 罠を設置 (最大2個, CT 20秒)', color: '#ff2244', abilityName: 'trap' },
-  { id: 'huntress', name: 'Huntress', nameJp: 'ハントレス', description: '斧投擲: 遠距離攻撃 (CT 10秒)', color: '#ff6644', abilityName: 'throw_axe' },
-];
-
-export interface MenuSelection {
-  mode: GameMode;
-  playerRole: PlayerRole;
-  survivorDef: CharacterDef;
-  /** Second survivor (bot-controlled) */
-  survivor2Def: CharacterDef;
-  killerDef: CharacterDef;
 }
 
 /** Pick the other survivor def (for the bot-controlled 2nd survivor) */
@@ -104,6 +69,8 @@ export class Menu {
   onCharSelect: ((defId: string) => void) | null = null;
   /** Set by main.ts when opponent's char_select is received */
   opponentCharDefId: string | null = null;
+  /** Set by main.ts when server sends game_start */
+  serverGameStart: { seed: number; survivorDef: string; survivor2Def: string; killerDef: string; survivorColor: string; survivor2Color: string; killerColor: string } | null = null;
 
   constructor() {
     this.previewSurvivor = new Survivor(0, 0);
@@ -220,21 +187,13 @@ export class Menu {
       case MenuState.OnlineWaiting:
         if (this.onlineRole === 'host') {
           // Host waiting screen: show player count, SPACE to start
+          if (this.gameStarted && this.serverGameStart) {
+            // Server confirmed game start — build selection from server data
+            return this.buildOnlineSelection();
+          }
           if (input.wasPressed('Space') || input.wasPressed('Enter')) {
-            // Start the game — host has already selected killer
+            // Send start_game to server, wait for game_start response
             this.onStartGame?.();
-            this.gameStarted = true;
-            const survivorDef = SURVIVOR_DEFS[0];
-            const survivor2Def = SURVIVOR_DEFS.length > 1 ? SURVIVOR_DEFS[1] : SURVIVOR_DEFS[0];
-            this.state = MenuState.Playing;
-            audioManager.playMenuSelect();
-            return {
-              mode: this.mode,
-              playerRole: this.playerRole,
-              survivorDef,
-              survivor2Def,
-              killerDef: KILLER_DEFS[this.selectedKiller],
-            };
           }
         } else if (this.onlineRole === 'guest') {
           // Guest: waiting for join confirmation, then go to survivor select
@@ -252,21 +211,9 @@ export class Menu {
         break;
 
       case MenuState.OnlineCharWait:
-        // Guest waiting for host to start the game
-        if (this.gameStarted) {
-          const survivorDef = SURVIVOR_DEFS[this.selectedSurvivor];
-          const survivor2Def = otherSurvivorDef(survivorDef);
-          // killerDef comes from host's char_select
-          const killerDef = KILLER_DEFS.find((d) => d.id === this.opponentCharDefId) || KILLER_DEFS[0];
-          this.state = MenuState.Playing;
-          audioManager.playMenuSelect();
-          return {
-            mode: this.mode,
-            playerRole: this.playerRole,
-            survivorDef,
-            survivor2Def,
-            killerDef,
-          };
+        // Guest waiting for server to start the game
+        if (this.gameStarted && this.serverGameStart) {
+          return this.buildOnlineSelection();
         }
         break;
 
@@ -955,6 +902,23 @@ export class Menu {
     ctx.font = '12px monospace';
     ctx.fillText('ESC / SPACE: 戻る', CX, CANVAS_HEIGHT - 40);
     ctx.textAlign = 'left';
+  }
+
+  /** Build MenuSelection from server's game_start data */
+  private buildOnlineSelection(): MenuSelection {
+    const gs = this.serverGameStart!;
+    const survivorDef = SURVIVOR_DEFS.find((d) => d.abilityName === gs.survivorDef) ?? SURVIVOR_DEFS[0];
+    const survivor2Def = SURVIVOR_DEFS.find((d) => d.abilityName === gs.survivor2Def) ?? SURVIVOR_DEFS[1] ?? SURVIVOR_DEFS[0];
+    const killerDef = KILLER_DEFS.find((d) => d.abilityName === gs.killerDef) ?? KILLER_DEFS[0];
+    this.state = MenuState.Playing;
+    audioManager.playMenuSelect();
+    return {
+      mode: this.mode,
+      playerRole: this.playerRole,
+      survivorDef,
+      survivor2Def,
+      killerDef,
+    };
   }
 
   /** Handle keyboard input for room code entry */

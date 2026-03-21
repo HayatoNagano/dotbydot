@@ -25,9 +25,8 @@ import { DeadHard } from '../abilities/DeadHard';
 import { TrapAbility } from '../abilities/TrapAbility';
 import { ThrowAxe } from '../abilities/ThrowAxe';
 import { eventBus } from './EventBus';
-import { HealthState, GamePhase } from '../types';
+import { HealthState, GamePhase, GameMode, PlayerRole, type MenuSelection } from '../types';
 import { NetInput } from '../net/protocol';
-import { MenuSelection, GameMode, PlayerRole } from '../ui/Menu';
 import { audioManager } from '../audio/AudioManager';
 import { TerrorRadius } from '../systems/TerrorRadius';
 import { InfoPanel } from '../ui/InfoPanel';
@@ -66,14 +65,17 @@ export class Game {
   readonly killerFog: FogOfWar;
   readonly survivorCamera: Camera;
   readonly killerCamera: Camera;
-  readonly input: Input;
-  readonly renderer: Renderer;
+  readonly input: Input | null;
+  readonly renderer: Renderer | null;
   readonly scratchMarks: ScratchMarks;
   /** Per-survivor skill checks */
   readonly skillCheck1: SkillCheck;
   readonly skillCheck2: SkillCheck;
-  readonly infoPanel: InfoPanel;
+  readonly infoPanel: InfoPanel | null;
   readonly selection: MenuSelection;
+  readonly headless: boolean;
+  /** Callback for sound events — used by server to broadcast sounds to clients */
+  soundCallback?: (name: string) => void;
 
   survivorAbility: Ability | null = null;
   survivor2Ability: Ability | null = null;
@@ -107,24 +109,27 @@ export class Game {
   guest1Input: NetInput | null = null;
   /** If set, a human guest is controlling survivor2 instead of AI */
   guest2Input: NetInput | null = null;
+  /** If set, a human client is controlling killer instead of AI/local */
+  killerInput: NetInput | null = null;
   /** Timer for killer kicking a generator (1 second action) */
   private kickingGen: Generator | null = null;
   private kickTimer = 0;
   private static readonly KICK_DURATION = 1.0;
 
-  constructor(canvas: HTMLCanvasElement, input: Input, selection: MenuSelection) {
+  constructor(canvas: HTMLCanvasElement | null, input: Input | null, selection: MenuSelection, headless = false) {
     this.selection = selection;
+    this.headless = headless;
     this.playerRole = selection.playerRole;
 
     this.viewportWidth = CANVAS_WIDTH;
     this.viewportHeight = GAME_HEIGHT;
     this.map = new TileMap();
     this.input = input;
-    this.renderer = new Renderer(canvas, CANVAS_WIDTH, CANVAS_HEIGHT);
+    this.renderer = canvas ? new Renderer(canvas, CANVAS_WIDTH, CANVAS_HEIGHT) : null;
     this.scratchMarks = new ScratchMarks();
     this.skillCheck1 = new SkillCheck();
     this.skillCheck2 = new SkillCheck();
-    this.infoPanel = new InfoPanel();
+    this.infoPanel = headless ? null : new InfoPanel();
 
     // Spawn positions — survivors on opposite corners, killer in center-bottom
     const s1Spawn = this.findWalkableSpawn(5, 5);
@@ -194,7 +199,7 @@ export class Game {
 
     eventBus.on('generator_completed', () => {
       this.generatorsCompleted++;
-      audioManager.playGeneratorComplete();
+      this.emitSound('playGeneratorComplete');
       if (this.generatorsCompleted >= GENERATORS_TO_POWER) {
         this.gatesPowered = true;
         for (const gate of this.exitGates) gate.powerOn();
@@ -202,8 +207,18 @@ export class Game {
     });
 
     eventBus.on('survivor_sacrificed', () => {
-      audioManager.playSacrifice();
+      this.emitSound('playSacrifice');
     });
+  }
+
+  /** Emit a sound event — plays locally or delegates to server callback */
+  private emitSound(name: string): void {
+    if (this.soundCallback) {
+      this.soundCallback(name);
+    } else if (!this.headless) {
+      const fn = (audioManager as unknown as Record<string, unknown>)[name];
+      if (typeof fn === 'function') fn.call(audioManager);
+    }
   }
 
   private setupAbilities(selection: MenuSelection): void {
@@ -430,7 +445,7 @@ export class Game {
       survivorInteract = aiResult.interact;
       survivorAbilityInput = aiResult.ability;
       this.survivor.walking = aiResult.walk;
-    } else {
+    } else if (this.input) {
       if (this.input.isDown('KeyW')) sdy -= 1;
       if (this.input.isDown('KeyS')) sdy += 1;
       if (this.input.isDown('KeyA')) sdx -= 1;
@@ -464,20 +479,27 @@ export class Game {
     let killerInteract = false;
     let killerAbilityInput = false;
 
-    if (this.killerAI) {
+    if (this.killerInput) {
+      // Human client controlling killer (online dedicated server mode)
+      kdx = this.killerInput.dx;
+      kdy = this.killerInput.dy;
+      killerInteract = this.killerInput.interactHeld;
+      killerAbilityInput = this.killerInput.ability;
+      this.killer.walking = this.killerInput.walk;
+    } else if (this.killerAI) {
       const aiResult = this.killerAI.update(dt);
       kdx = aiResult.dx;
       kdy = aiResult.dy;
       killerInteract = aiResult.interact;
       killerAbilityInput = aiResult.ability;
       this.killer.walking = aiResult.walk;
-    } else if (this.playerRole === PlayerRole.Killer) {
+    } else if (this.input && this.playerRole === PlayerRole.Killer) {
       if (this.input.isDown('KeyW')) kdy -= 1;
       if (this.input.isDown('KeyS')) kdy += 1;
       if (this.input.isDown('KeyA')) kdx -= 1;
       if (this.input.isDown('KeyD')) kdx += 1;
       this.killer.walking = this.input.isDown('ShiftLeft');
-    } else {
+    } else if (this.input) {
       if (this.input.isDown('ArrowUp')) kdy -= 1;
       if (this.input.isDown('ArrowDown')) kdy += 1;
       if (this.input.isDown('ArrowLeft')) kdx -= 1;
@@ -515,9 +537,10 @@ export class Game {
     );
 
     // Killer generator kick
-    const killerInteractHeld = playingAsKiller
-      ? this.input.isDown('KeyE')
-      : this.input.isDown('Period');
+    const killerInteractHeld = this.killerInput ? this.killerInput.interactHeld
+      : playingAsKiller
+        ? (this.input?.isDown('KeyE') ?? false)
+        : (this.input?.isDown('Period') ?? false);
     if ((killerInteractHeld || killerInteract) && !this.killer.isCarrying && !this.killer.isStunned) {
       if (!this.kickingGen) {
         for (const gen of this.generators) {
@@ -538,7 +561,7 @@ export class Game {
           this.kickTimer += dt;
           if (this.kickTimer >= Game.KICK_DURATION) {
             this.kickingGen.kick();
-            audioManager.playGeneratorKick();
+            this.emitSound('playGeneratorKick');
             this.kickingGen = null;
             this.kickTimer = 0;
           }
@@ -553,9 +576,10 @@ export class Game {
     }
 
     // Killer interact (attack / hook / pallet break / pickup / locker search)
-    const killerInteractPressed = playingAsKiller
-      ? this.input.wasPressed('KeyE')
-      : this.input.wasPressed('Period');
+    const killerInteractPressed = this.killerInput ? this.killerInput.interact
+      : playingAsKiller
+        ? (this.input?.wasPressed('KeyE') ?? false)
+        : (this.input?.wasPressed('Period') ?? false);
     if ((killerInteractPressed || killerInteract) && !this.kickingGen) {
       if (this.killer.isCarrying) {
         let hooked = false;
@@ -565,8 +589,8 @@ export class Game {
             this.killer.carrying = null;
             this.killer.speed = KILLER_BASE_SPEED;
             hooked = true;
-            audioManager.playHook();
-            audioManager.playHookScream();
+            this.emitSound('playHook');
+            this.emitSound('playHookScream');
             break;
           }
         }
@@ -581,8 +605,8 @@ export class Game {
 
           if (this.killer.tryAttack(s)) {
             hit = true;
-            audioManager.playAttack();
-            audioManager.playHit();
+            this.emitSound('playAttack');
+            this.emitSound('playHit');
             break;
           }
         }
@@ -591,7 +615,7 @@ export class Game {
           for (const pallet of this.pallets) {
             if (pallet.dropped && !pallet.isDestroyed && CollisionSystem.distance(this.killer, pallet) < TILE_SIZE * 1.5) {
               pallet.breakPallet();
-              audioManager.playPalletBreak();
+              this.emitSound('playPalletBreak');
               break;
             }
           }
@@ -607,8 +631,8 @@ export class Game {
               const found = locker.exit();
               if (found) {
                 found.takeDamage();
-                audioManager.playLocker();
-                audioManager.playHit();
+                this.emitSound('playLocker');
+                this.emitSound('playHit');
               }
               break;
             }
@@ -618,15 +642,16 @@ export class Game {
     }
 
     // Killer ability
-    const killerAbilityPressed = playingAsKiller
-      ? this.input.wasPressed('KeyQ')
-      : this.input.wasPressed('Comma');
+    const killerAbilityPressed = this.killerInput ? this.killerInput.ability
+      : playingAsKiller
+        ? (this.input?.wasPressed('KeyQ') ?? false)
+        : (this.input?.wasPressed('Comma') ?? false);
     if ((killerAbilityPressed || killerAbilityInput) && this.killerAbility) {
       if (this.killerAbility.activate()) {
         if (this.throwAxe && this.killerAbility === this.throwAxe) {
-          audioManager.playAxeThrow();
+          this.emitSound('playAxeThrow');
         } else {
-          audioManager.playAbilityActivate();
+          this.emitSound('playAbilityActivate');
         }
       }
     }
@@ -683,7 +708,7 @@ export class Game {
         if (trap.armed && !trap.trapped) {
           for (const s of this.survivors) {
             if (trap.checkTrigger(s)) {
-              audioManager.playTrapSnap();
+              this.emitSound('playTrapSnap');
               break;
             }
           }
@@ -702,7 +727,7 @@ export class Game {
               if (!(dh && dh.invincible)) {
                 s.takeDamage();
                 axe.alive = false;
-                audioManager.playHit();
+                this.emitSound('playHit');
                 break;
               }
             }
@@ -754,7 +779,7 @@ export class Game {
       this.repairTickTimer += dt;
       if (this.repairTickTimer > 0.25) {
         this.repairTickTimer = 0;
-        audioManager.playRepairTick();
+        this.emitSound('playRepairTick');
       }
     } else {
       this.repairTickTimer = 0;
@@ -766,7 +791,7 @@ export class Game {
       this.killer.centerX, this.killer.centerY,
       playerSurvivor.centerX, playerSurvivor.centerY,
     );
-    audioManager.updateHeartbeat(terrorIntensity);
+    if (!this.headless) audioManager.updateHeartbeat(terrorIntensity);
 
     // Chase detection — killer can see ANY alive survivor nearby
     const chaseRange = TILE_SIZE * 8;
@@ -789,19 +814,19 @@ export class Game {
       this.chaseCooldown = 3;
       if (!this.inChase) {
         this.inChase = true;
-        audioManager.startChase();
+        this.emitSound('startChase');
       }
     } else if (this.inChase) {
       this.chaseCooldown -= dt;
       if (this.chaseCooldown <= 0) {
         this.inChase = false;
-        audioManager.stopChase();
+        this.emitSound('stopChase');
       }
     }
 
     // Gate powered sound (one-shot)
     if (this.gatesPowered && !this.prevGatesPowered) {
-      audioManager.playGatePowered();
+      this.emitSound('playGatePowered');
     }
     this.prevGatesPowered = this.gatesPowered;
 
@@ -823,13 +848,13 @@ export class Game {
 
     // Win/lose sound (one-shot)
     if (this.phase !== this.prevPhase) {
-      audioManager.stopHeartbeat();
-      audioManager.stopChase();
+      this.emitSound('stopHeartbeat');
+      this.emitSound('stopChase');
       this.inChase = false;
       if (this.phase === GamePhase.SurvivorWin) {
-        audioManager.playEscape();
+        this.emitSound('playEscape');
       } else if (this.phase === GamePhase.KillerWin) {
-        audioManager.playSacrifice();
+        this.emitSound('playSacrifice');
       }
     }
     this.prevPhase = this.phase;
@@ -861,29 +886,29 @@ export class Game {
     // Survivor ability
     const abilityInput = guestInput ? guestInput.ability
       : isAI ? aiAbility
-      : (isLocalPlayer && this.input.wasPressed('KeyQ'));
+      : (isLocalPlayer && this.input?.wasPressed('KeyQ'));
     if (abilityInput) {
       if (ability?.activate()) {
-        audioManager.playAbilityActivate();
+        this.emitSound('playAbilityActivate');
       }
     }
 
     // Skill check / self-unhook
     const spaceInput = guestInput ? guestInput.space
-      : (isLocalPlayer && this.input.wasPressed('Space'));
+      : (isLocalPlayer && this.input?.wasPressed('Space'));
     if (spaceInput) {
       if (sc.active) {
         const scResult = sc.hit();
         switch (scResult) {
-          case 'great': audioManager.playSkillCheckGreat(); break;
-          case 'good': audioManager.playSkillCheckGood(); break;
-          case 'miss': audioManager.playSkillCheckMiss(); break;
+          case 'great': this.emitSound('playSkillCheckGreat'); break;
+          case 'good': this.emitSound('playSkillCheckGood'); break;
+          case 'miss': this.emitSound('playSkillCheckMiss'); break;
         }
       } else if (isHooked) {
         const hook = this.hooks.find((h) => h.hooked === s);
         if (hook && hook.canSelfUnhook) {
           if (hook.attemptSelfUnhook()) {
-            audioManager.playLocker();
+            this.emitSound('playLocker');
           }
         }
       }
@@ -892,16 +917,16 @@ export class Game {
     // Survivor interact
     const interactHeld = guestInput ? guestInput.interactHeld
       : isAI ? aiInteract
-      : (playingAsKiller ? aiInteract : this.input.isDown('KeyE'));
+      : (playingAsKiller ? aiInteract : (this.input?.isDown('KeyE') ?? false));
     const interactPressed = guestInput ? guestInput.interact
       : isAI ? aiInteract
-      : (playingAsKiller ? aiInteract : this.input.wasPressed('KeyE'));
+      : (playingAsKiller ? aiInteract : (this.input?.wasPressed('KeyE') ?? false));
 
     if (interactHeld && !s.isIncapacitated && !isHooked) {
       if (survivorLocker) {
         if (interactPressed) {
           survivorLocker.exit();
-          audioManager.playLocker();
+          this.emitSound('playLocker');
         }
       } else {
         // Rescue teammate from hook (hold interact near a hooked teammate)
@@ -909,7 +934,7 @@ export class Game {
         for (const hook of this.hooks) {
           if (hook.hooked && hook.hooked !== s && CollisionSystem.distance(s, hook) < TILE_SIZE * 2) {
             if (hook.rescue(dt)) {
-              audioManager.playLocker(); // rescue sound
+              this.emitSound('playLocker'); // rescue sound
             }
             didRescue = true;
             break;
@@ -955,7 +980,7 @@ export class Game {
             for (const locker of this.lockers) {
               if (!locker.isOccupied && CollisionSystem.distance(s, locker) < TILE_SIZE * 1.5) {
                 locker.enter(s);
-                audioManager.playLocker();
+                this.emitSound('playLocker');
                 break;
               }
             }
@@ -966,10 +991,10 @@ export class Game {
               if (!pallet.dropped && !pallet.isDestroyed && CollisionSystem.distance(s, pallet) < TILE_SIZE * 1.5) {
                 const killerNear = CollisionSystem.distance(this.killer, pallet) < TILE_SIZE * 1.5;
                 pallet.drop();
-                audioManager.playPalletDrop();
+                this.emitSound('playPalletDrop');
                 if (killerNear) {
                   this.killer.applyStun(this.map);
-                  audioManager.playStun();
+                  this.emitSound('playStun');
                 }
                 break;
               }
@@ -986,6 +1011,7 @@ export class Game {
   }
 
   render(alpha: number): void {
+    if (!this.renderer) return;
     this.renderer.clear();
 
     const characters: Character[] = [...this.survivors, this.killer];
@@ -1013,19 +1039,21 @@ export class Game {
     }
 
     // HUD overlay (Canvas-based, top-left)
-    const hookedHook = this.hooks.find((h) => h.hooked === this.survivor) ?? null;
-    const hookedHook2 = this.hooks.find((h) => h.hooked === this.survivor2) ?? null;
-    const s1InLocker = this.lockers.some((l) => l.occupant === this.survivor);
-    const s2InLocker = this.lockers.some((l) => l.occupant === this.survivor2);
-    this.infoPanel.render(
-      this.renderer.ctx,
-      this.survivors, this.killer,
-      this.generatorsCompleted, this.gatesPowered, this.isRepairing,
-      [this.survivorAbility, this.survivor2Ability], this.killerAbility,
-      [hookedHook, hookedHook2],
-      this.playerRole,
-      [s1InLocker, s2InLocker],
-    );
+    if (this.infoPanel) {
+      const hookedHook = this.hooks.find((h) => h.hooked === this.survivor) ?? null;
+      const hookedHook2 = this.hooks.find((h) => h.hooked === this.survivor2) ?? null;
+      const s1InLocker = this.lockers.some((l) => l.occupant === this.survivor);
+      const s2InLocker = this.lockers.some((l) => l.occupant === this.survivor2);
+      this.infoPanel.render(
+        this.renderer.ctx,
+        this.survivors, this.killer,
+        this.generatorsCompleted, this.gatesPowered, this.isRepairing,
+        [this.survivorAbility, this.survivor2Ability], this.killerAbility,
+        [hookedHook, hookedHook2],
+        this.playerRole,
+        [s1InLocker, s2InLocker],
+      );
+    }
 
     if (this.phase !== GamePhase.Playing) {
       this.renderGameOver();
@@ -1033,6 +1061,7 @@ export class Game {
   }
 
   private renderAbilityProjectiles(view: RenderView): void {
+    if (!this.renderer) return;
     const ctx = this.renderer.ctx;
     ctx.save();
     ctx.beginPath();
@@ -1068,6 +1097,7 @@ export class Game {
   }
 
   private renderGameOver(): void {
+    if (!this.renderer) return;
     const ctx = this.renderer.ctx;
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(0, 0, CANVAS_WIDTH, GAME_HEIGHT);

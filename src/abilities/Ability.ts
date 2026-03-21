@@ -24,6 +24,10 @@ export abstract class Ability {
     return Math.max(0, this.cooldownTimer);
   }
 
+  set cooldownRemaining(value: number) {
+    this.cooldownTimer = value;
+  }
+
   activate(): boolean {
     if (!this.isReady) return false;
     this._isActive = true;

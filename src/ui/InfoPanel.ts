@@ -4,7 +4,7 @@ import { Ability } from '../abilities/Ability';
 import { Hook } from '../entities/Hook';
 import { HealthState } from '../types';
 import { GENERATORS_TO_POWER } from '../constants';
-import { PlayerRole, SURVIVOR_DEFS, KILLER_DEFS, type CharacterDef } from './Menu';
+import { PlayerRole, SURVIVOR_DEFS, KILLER_DEFS, type CharacterDef } from '../types';
 
 const HEALTH_JP: Record<string, string> = {
   healthy: '健康',

@@ -1,14 +1,53 @@
 /**
  * Network protocol message types for online multiplayer.
  *
- * Architecture: Host (killer) runs the Game simulation.
- * Guests (survivors) send inputs, receive state.
- * The relay server forwards messages between host and guests.
+ * Architecture: Dedicated server runs the Game simulation.
+ * All clients (killer + survivors) send inputs, receive state.
  */
 
-// ─── Relay payload types (sent inside { type: 'relay', data: ... }) ───
+export type OnlineRole = 'killer' | 'survivor1' | 'survivor2';
 
-/** Host → Guests: Game initialization (same seed = same map) */
+// ─── Client → Server messages ───
+
+/** Client → Server: Input state each frame */
+export interface NetInput {
+  type: 'input';
+  role?: OnlineRole;
+  dx: number;
+  dy: number;
+  interact: boolean;
+  interactHeld: boolean;
+  ability: boolean;
+  walk: boolean;
+  space: boolean; // skill check / self-unhook
+  tick?: number; // client-local tick counter for server reconciliation
+}
+
+/** Client → Server: Skill check result (client runs skill check locally) */
+export interface NetSkillCheckResult {
+  type: 'sc_result';
+  result: 'great' | 'good' | 'miss';
+}
+
+/** Client → Server: Character selection */
+export interface NetCharSelect {
+  type: 'char_select';
+  defId: string;
+}
+
+/** Ready signal */
+export interface NetReady {
+  type: 'ready';
+}
+
+/** Host/client → Server: Signal to start the game */
+export interface NetStartGame {
+  type: 'start_game';
+}
+
+// ─── Server → Client messages ───
+
+/** Server → Clients: Game initialization (same seed = same map) */
 export interface NetGameStart {
   type: 'game_start';
   seed: number;
@@ -20,20 +59,7 @@ export interface NetGameStart {
   killerColor: string;
 }
 
-/** Guest → Host: Input state each frame */
-export interface NetInput {
-  type: 'input';
-  dx: number;
-  dy: number;
-  interact: boolean;
-  interactHeld: boolean;
-  ability: boolean;
-  walk: boolean;
-  space: boolean; // skill check / self-unhook
-  tick?: number; // guest-local tick counter for server reconciliation
-}
-
-/** Host → Guests: Compact game state snapshot (sent at ~30Hz) */
+/** Server → Clients: Compact game state snapshot (sent at ~45Hz) */
 export interface NetState {
   type: 'state';
   tick: number;
@@ -53,7 +79,7 @@ export interface NetState {
   s2: number[];
   // Killer [x, y, prevX, prevY, dir(0-3), moving, walking, stunTime, atkCooldown, carrying, animTime]
   k: number[];
-  // Generators: [progress, completed(0/1), repairing(0/1)][]
+  // Generators: [progress, completed(0/1), repairing(0/1), regressing(0/1)][]
   g: number[][];
   // Hooks: [hookedFlag(0/1), stage, timer, canSelfUnhook(0/1), rescueProgress, selfUnhookProgress][]
   h: number[][];
@@ -76,37 +102,16 @@ export interface NetState {
   ka: number[];
   // Lockers: [occupant (0=empty, 1=survivor1, 2=survivor2)][]
   l: number[];
-  // Server reconciliation: last processed guest tick per survivor controller
+  // Server reconciliation: last processed client tick per role
   ackTick: number;
   ackTick2: number;
+  ackTickK: number;
 }
 
-/** Host → Guest / Guest → Host: Sound effect trigger */
+/** Server → Client: Sound effect trigger */
 export interface NetSound {
   type: 'sound';
   name: string;
-}
-
-/** Host → Guests: Character selection options */
-export interface NetCharSelect {
-  type: 'char_select';
-  defId: string;
-}
-
-/** Ready signal */
-export interface NetReady {
-  type: 'ready';
-}
-
-/** Host → Guests: Signal to start the game */
-export interface NetStartGame {
-  type: 'start_game';
-}
-
-/** Guest → Host: Skill check result (guest runs skill check locally) */
-export interface NetSkillCheckResult {
-  type: 'sc_result';
-  result: 'great' | 'good' | 'miss';
 }
 
 export type NetMessage = NetGameStart | NetInput | NetState | NetSound | NetCharSelect | NetReady | NetStartGame | NetSkillCheckResult;

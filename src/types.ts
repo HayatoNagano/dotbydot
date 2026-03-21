@@ -32,3 +32,36 @@ export enum HealthState {
   Dying = 'dying',
   Dead = 'dead',
 }
+
+export enum GameMode {
+  VsCPU = 'vs_cpu',
+  Online = 'online',
+}
+
+export interface CharacterDef {
+  id: string;
+  name: string;
+  nameJp: string;
+  description: string;
+  color: string;
+  abilityName: string;
+}
+
+export const SURVIVOR_DEFS: CharacterDef[] = [
+  { id: 'runner', name: 'Dwight', nameJp: 'ドワット', description: 'スプリントバースト: 3秒間 速度2倍 (CT 40秒)', color: '#00ff88', abilityName: 'sprint_burst' },
+  { id: 'dodger', name: 'Fenley', nameJp: 'フェンリー', description: 'デッドハード: 0.5秒 無敵ダッシュ (CT 60秒)', color: '#00ccff', abilityName: 'dead_hard' },
+];
+
+export const KILLER_DEFS: CharacterDef[] = [
+  { id: 'trapper', name: 'Trapper', nameJp: 'トラッパー', description: 'ベアトラップ: 罠を設置 (最大2個, CT 20秒)', color: '#ff2244', abilityName: 'trap' },
+  { id: 'huntress', name: 'Huntress', nameJp: 'ハントレス', description: '斧投擲: 遠距離攻撃 (CT 10秒)', color: '#ff6644', abilityName: 'throw_axe' },
+];
+
+export interface MenuSelection {
+  mode: GameMode;
+  playerRole: PlayerRole;
+  survivorDef: CharacterDef;
+  /** Second survivor (bot-controlled) */
+  survivor2Def: CharacterDef;
+  killerDef: CharacterDef;
+}
