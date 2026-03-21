@@ -74,6 +74,8 @@ export interface NetState {
   sa: number[];
   s2a: number[];
   ka: number[];
+  // Lockers: [occupant (0=empty, 1=survivor1, 2=survivor2)][]
+  l: number[];
   // Server reconciliation: last processed guest tick per survivor controller
   ackTick: number;
   ackTick2: number;

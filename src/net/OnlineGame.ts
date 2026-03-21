@@ -206,7 +206,8 @@ export class OnlineGame {
     // Client-side prediction for this guest's survivor
     const mySurvivor = this.guestIndex === 0 ? this.game.survivor : this.game.survivor2;
 
-    if (!mySurvivor.isIncapacitated && mySurvivor.health !== HealthState.Dead) {
+    const inLocker = this.game.lockers.some((l) => l.occupant === mySurvivor);
+    if (!mySurvivor.isIncapacitated && mySurvivor.health !== HealthState.Dead && !inLocker) {
       const { dx, dy, walk } = this.lastLocalInput;
 
       // Record this tick in prediction buffer for server reconciliation replay
@@ -443,6 +444,7 @@ export class OnlineGame {
       h: g.hooks.map((h) => [h.hooked ? 1 : 0, h.stage, r(h.stageTimer), h.canSelfUnhook ? 1 : 0, r(h.rescueProgress)]),
       p: g.pallets.map((p) => [p.dropped ? 1 : 0, p.isDestroyed ? 1 : 0, r(p.pos.x), r(p.pos.y), p.width, p.height]),
       gt: g.exitGates.map((gt) => [gt.powered ? 1 : 0, gt.isOpen ? 1 : 0, r(gt.openProgress)]),
+      l: g.lockers.map((loc) => loc.occupant === s ? 1 : loc.occupant === s2 ? 2 : 0),
       tr: (g.killerAbility instanceof TrapAbility ? g.killerAbility.traps : [])
         .map((t) => [r(t.pos.x), r(t.pos.y), t.armed ? 1 : 0, t.trapped ? 1 : 0]),
       ax: (g.killerAbility instanceof ThrowAxe ? g.killerAbility.axes : [])
@@ -649,6 +651,13 @@ export class OnlineGame {
         g.exitGates[i].powered = gtd[0] === 1;
         g.exitGates[i].isOpen = gtd[1] === 1;
         g.exitGates[i].openProgress = gtd[2];
+      }
+    });
+
+    // Lockers
+    state.l.forEach((occ, i) => {
+      if (i < g.lockers.length) {
+        g.lockers[i].occupant = occ === 1 ? s : occ === 2 ? s2 : null;
       }
     });
 
