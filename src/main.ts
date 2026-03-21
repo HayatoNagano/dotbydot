@@ -3,7 +3,7 @@ import { GameLoop } from './core/GameLoop';
 import { Input } from './core/Input';
 import { Menu, MenuState, GameMode } from './ui/Menu';
 import { GamePhase } from './types';
-import { CANVAS_WIDTH, CANVAS_HEIGHT } from './constants';
+import { CANVAS_WIDTH, CANVAS_HEIGHT, GAME_HEIGHT } from './constants';
 import { audioManager } from './audio/AudioManager';
 import { NetworkClient } from './net/NetworkClient';
 import { OnlineGame } from './net/OnlineGame';
@@ -18,6 +18,9 @@ const menu = new Menu();
 let game: Game | null = null;
 let onlineGame: OnlineGame | null = null;
 let netClient: NetworkClient | null = null;
+
+/** Set when a disconnect is detected during online gameplay */
+let disconnectMessage: string | null = null;
 
 // Initialize audio on first user interaction
 const initAudio = () => {
@@ -55,8 +58,12 @@ menu.onCreateRoom = async () => {
       if (msg.type === 'error') {
         menu.onlineError = msg.message;
       }
-      if (msg.type === 'opponent_left' && !game) {
-        menu.onlineError = 'プレイヤーが切断しました';
+      if (msg.type === 'opponent_left') {
+        if (game) {
+          disconnectMessage = 'プレイヤーが切断しました';
+        } else {
+          menu.onlineError = 'プレイヤーが切断しました';
+        }
       }
     });
   } catch {
@@ -91,9 +98,13 @@ menu.onJoinRoom = async (code: string) => {
         menu.onlineError = msg.message;
         menu.state = MenuState.OnlineJoinInput;
       }
-      if (msg.type === 'opponent_left' && !game) {
-        menu.onlineError = 'ホストが切断しました';
-        menu.state = MenuState.OnlineLobby;
+      if (msg.type === 'opponent_left') {
+        if (game) {
+          disconnectMessage = 'ホストが切断しました';
+        } else {
+          menu.onlineError = 'ホストが切断しました';
+          menu.state = MenuState.OnlineLobby;
+        }
       }
     });
   } catch {
@@ -141,10 +152,62 @@ function returnToMenu(): void {
   audioManager.stopChase();
   if (game) game.infoPanel.hide();
   game = null;
+  disconnectMessage = null;
   if (onlineGame) cleanupOnline();
   menu.state = MenuState.Title;
   audioManager.startMenuBGM();
   audioManager.startCampfire();
+}
+
+/** Render the disconnect error overlay */
+function renderDisconnectScreen(): void {
+  // Dark overlay
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.fillRect(0, 0, CANVAS_WIDTH, GAME_HEIGHT);
+
+  // Red border frame
+  ctx.strokeStyle = '#ff2244';
+  ctx.lineWidth = 2;
+  const bx = CANVAS_WIDTH / 2 - 180;
+  const by = GAME_HEIGHT / 2 - 80;
+  const bw = 360;
+  const bh = 160;
+  ctx.strokeRect(bx, by, bw, bh);
+
+  // Inner background
+  ctx.fillStyle = 'rgba(30, 0, 8, 0.95)';
+  ctx.fillRect(bx + 1, by + 1, bw - 2, bh - 2);
+
+  // Warning icon
+  ctx.font = 'bold 28px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ff2244';
+  ctx.fillText('⚠', CANVAS_WIDTH / 2, by + 30);
+
+  // Title
+  ctx.font = 'bold 18px monospace';
+  ctx.fillStyle = '#ff4466';
+  ctx.fillText('接続が切断されました', CANVAS_WIDTH / 2, by + 58);
+
+  // Message
+  ctx.font = '13px monospace';
+  ctx.fillStyle = '#ccc';
+  ctx.fillText(disconnectMessage ?? '通信エラー', CANVAS_WIDTH / 2, by + 86);
+
+  // Instruction
+  ctx.font = '12px monospace';
+  ctx.fillStyle = '#888';
+  ctx.fillText('ESC キーでメニューに戻る', CANVAS_WIDTH / 2, by + 120);
+
+  // Pulsing border effect
+  const pulse = Math.sin(Date.now() / 500) * 0.3 + 0.7;
+  ctx.strokeStyle = `rgba(255, 34, 68, ${pulse})`;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(bx - 3, by - 3, bw + 6, bh + 6);
+
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
 }
 
 // ─── Game loop ───
@@ -152,11 +215,26 @@ function returnToMenu(): void {
 const loop = new GameLoop(
   (dt) => {
     if (game) {
+      // Disconnect detected — freeze game, wait for ESC
+      if (disconnectMessage) {
+        if (input.wasPressed('Escape')) {
+          returnToMenu();
+        }
+        input.endFrame();
+        return;
+      }
+
       if (onlineGame) {
+        // Check WebSocket connection loss
+        if (netClient && !netClient.connected && !disconnectMessage) {
+          disconnectMessage = '接続が失われました';
+          input.endFrame();
+          return;
+        }
         // Online mode
         onlineGame.update(dt);
         if (menu.onlineRole === 'guest') {
-          onlineGame.sendInput(input);
+          onlineGame.sendInput(input, dt);
         }
       } else {
         // Local mode
@@ -209,6 +287,10 @@ const loop = new GameLoop(
         onlineGame.render(_alpha);
       } else {
         game.render(_alpha);
+      }
+      // Render disconnect overlay on top of frozen game
+      if (disconnectMessage) {
+        renderDisconnectScreen();
       }
     } else {
       menu.render(ctx);

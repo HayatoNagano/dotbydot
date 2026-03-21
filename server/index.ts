@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 
 const PORT = Number(process.env.PORT) || 3001;
 const MAX_GUESTS = 2;
+const PING_INTERVAL = 25_000; // 25s — keep alive under Render's 60s timeout
 
 interface Room {
   code: string;
@@ -23,22 +24,55 @@ function generateCode(): string {
   return code;
 }
 
-function send(ws: WebSocket, msg: object): void {
+function sendJSON(ws: WebSocket, msg: object): void {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(msg));
   }
 }
 
-const wss = new WebSocketServer({ port: PORT });
+/** Send a pre-serialized string (avoids re-stringify) */
+function sendRaw(ws: WebSocket, data: string): void {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(data);
+  }
+}
+
+const wss = new WebSocketServer({
+  port: PORT,
+  perMessageDeflate: {
+    zlibDeflateOptions: { level: 1 }, // fast compression
+    threshold: 128, // only compress messages > 128 bytes
+  },
+});
+
+// ─── Ping/pong keepalive (prevents Render from closing idle connections) ───
+const aliveSet = new Set<WebSocket>();
+
+const pingTimer = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!aliveSet.has(ws)) {
+      ws.terminate();
+      continue;
+    }
+    aliveSet.delete(ws);
+    ws.ping();
+  }
+}, PING_INTERVAL);
+
+wss.on('close', () => clearInterval(pingTimer));
 
 wss.on('connection', (ws) => {
+  aliveSet.add(ws);
+  ws.on('pong', () => aliveSet.add(ws));
+
   let myRoom: Room | null = null;
   let myRole: 'host' | 'guest' | null = null;
 
   ws.on('message', (raw) => {
+    const str = typeof raw === 'string' ? raw : String(raw);
     let msg: { type: string; [key: string]: unknown };
     try {
-      msg = JSON.parse(String(raw));
+      msg = JSON.parse(str);
     } catch {
       return;
     }
@@ -50,7 +84,7 @@ wss.on('connection', (ws) => {
         rooms.set(code, room);
         myRoom = room;
         myRole = 'host';
-        send(ws, { type: 'room_created', code });
+        sendJSON(ws, { type: 'room_created', code });
         console.log(`Room ${code} created`);
         break;
       }
@@ -59,11 +93,11 @@ wss.on('connection', (ws) => {
         const code = String(msg.code).toUpperCase();
         const room = rooms.get(code);
         if (!room) {
-          send(ws, { type: 'error', message: '部屋が見つかりません' });
+          sendJSON(ws, { type: 'error', message: '部屋が見つかりません' });
           break;
         }
         if (room.guests.length >= MAX_GUESTS) {
-          send(ws, { type: 'error', message: '部屋が満員です' });
+          sendJSON(ws, { type: 'error', message: '部屋が満員です' });
           break;
         }
         const guestIndex = room.guests.length;
@@ -71,13 +105,13 @@ wss.on('connection', (ws) => {
         guestIndices.set(ws, guestIndex);
         myRoom = room;
         myRole = 'guest';
-        send(ws, { type: 'joined', role: 'guest', guestIndex });
+        sendJSON(ws, { type: 'joined', role: 'guest', guestIndex });
         // Notify host of player count
         const playerCount = 1 + room.guests.length;
-        send(room.host, { type: 'player_joined', playerCount, guestIndex });
+        sendJSON(room.host, { type: 'player_joined', playerCount, guestIndex });
         // Notify all existing guests of player count
         for (const g of room.guests) {
-          send(g, { type: 'player_count', playerCount });
+          sendJSON(g, { type: 'player_count', playerCount });
         }
         console.log(`Room ${code}: guest ${guestIndex} joined (${playerCount}/3)`);
         break;
@@ -86,14 +120,19 @@ wss.on('connection', (ws) => {
       case 'relay': {
         if (!myRoom) break;
         if (myRole === 'host') {
-          // Host broadcasts to all guests
+          // Host → guests: forward the raw relay payload without re-serializing
+          // Build a minimal wrapper with pre-serialized inner data
+          const innerJson = JSON.stringify(msg.data);
+          const wrapped = `{"type":"relay","data":${innerJson}}`;
           for (const g of myRoom.guests) {
-            send(g, { type: 'relay', data: msg.data });
+            sendRaw(g, wrapped);
           }
         } else {
-          // Guest sends to host, tagged with guestIndex
+          // Guest → host: tag with guestIndex, forward efficiently
           const gi = guestIndices.get(ws) ?? 0;
-          send(myRoom.host, { type: 'relay', data: msg.data, guestIndex: gi });
+          const innerJson = JSON.stringify(msg.data);
+          const wrapped = `{"type":"relay","data":${innerJson},"guestIndex":${gi}}`;
+          sendRaw(myRoom.host, wrapped);
         }
         break;
       }
@@ -113,11 +152,12 @@ wss.on('connection', (ws) => {
     const room = myRoom;
     const code = room.code;
     myRoom = null;
+    aliveSet.delete(ws);
 
     if (myRole === 'host') {
       // Host left: notify all guests and delete room
       for (const g of room.guests) {
-        send(g, { type: 'opponent_left' });
+        sendJSON(g, { type: 'opponent_left' });
         guestIndices.delete(g);
       }
       rooms.delete(code);
@@ -127,10 +167,10 @@ wss.on('connection', (ws) => {
       if (idx >= 0) room.guests.splice(idx, 1);
       guestIndices.delete(ws);
       const playerCount = 1 + room.guests.length;
-      send(room.host, { type: 'player_left', playerCount });
+      sendJSON(room.host, { type: 'player_left', playerCount });
       // Notify remaining guests
       for (const g of room.guests) {
-        send(g, { type: 'player_count', playerCount });
+        sendJSON(g, { type: 'player_count', playerCount });
       }
     }
     console.log(`Room ${code}: ${myRole} left`);

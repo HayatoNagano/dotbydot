@@ -24,6 +24,7 @@ import { audioManager } from '../audio/AudioManager';
 import { SkillCheck } from '../ui/SkillCheck';
 
 const STATE_SEND_INTERVAL = 1 / 30; // 30Hz state updates
+const FULL_STATE_INTERVAL = 1;       // Full state every 1s for reliability
 
 /** Buffered snapshot for entity interpolation */
 interface Snapshot {
@@ -50,6 +51,7 @@ export class OnlineGame {
   /** Which survivor this guest controls (0 or 1). Only meaningful for guests. */
   private guestIndex: number;
   private stateSendTimer = 0;
+  private fullStateTimer = 0;
   private tick = 0;
 
   // ─── Host state: remote inputs from guests (survivors) ───
@@ -63,7 +65,7 @@ export class OnlineGame {
   private survivorSnapshots: Snapshot[] = []; // the OTHER survivor
   /** Time tracking for interpolation */
   private interpTime = 0;
-  private readonly INTERP_DELAY = 0.1;
+  private readonly INTERP_DELAY = 0.066; // 66ms = 2 state updates at 30Hz
   private readonly RECONCILE_BLEND = 0.3;
   private lastReceivedTick = 0;
 
@@ -148,6 +150,7 @@ export class OnlineGame {
 
     // Periodically send state to all guests
     this.stateSendTimer += dt;
+    this.fullStateTimer += dt;
     if (this.stateSendTimer >= STATE_SEND_INTERVAL) {
       this.stateSendTimer = 0;
       this.tick++;
@@ -257,8 +260,13 @@ export class OnlineGame {
   private guest1Connected = false;
   private guest2Connected = false;
 
+  /** Previous sent input for deduplication */
+  private prevSentInput: NetInput = { ...EMPTY_INPUT };
+  private inputSendTimer = 0;
+  private readonly INPUT_SEND_INTERVAL = 1 / 30; // Cap input send rate to 30Hz
+
   /** Send local input to host (guest calls this) */
-  sendInput(input: Input): void {
+  sendInput(input: Input, dt: number): void {
     if (this.isHost) return;
 
     // Guest plays as survivor, reads WASD
@@ -279,7 +287,25 @@ export class OnlineGame {
       walk: input.isDown('ShiftLeft'),
       space: input.wasPressed('Space'),
     };
-    this.net.relay(msg);
+
+    // Always send immediately if one-shot actions are pressed (interact, ability, space)
+    const hasOneShot = msg.interact || msg.ability || msg.space;
+
+    // Otherwise, rate-limit to 30Hz and only send if input changed
+    this.inputSendTimer += dt;
+    const inputChanged = msg.dx !== this.prevSentInput.dx || msg.dy !== this.prevSentInput.dy
+      || msg.interactHeld !== this.prevSentInput.interactHeld || msg.walk !== this.prevSentInput.walk;
+
+    if (hasOneShot || (this.inputSendTimer >= this.INPUT_SEND_INTERVAL && inputChanged)) {
+      this.inputSendTimer = 0;
+      this.prevSentInput = msg;
+      this.net.relay(msg);
+    }
+  }
+
+  /** Round to 1 decimal place to shrink JSON (~30% smaller numbers) */
+  private r(n: number): number {
+    return Math.round(n * 10) / 10;
   }
 
   private sendState(): void {
@@ -287,6 +313,12 @@ export class OnlineGame {
     const s = g.survivor;
     const s2 = g.survivor2;
     const k = g.killer;
+    const r = this.r.bind(this);
+
+    // Send scratch marks less frequently (every 5th state = 6Hz) for bandwidth
+    const sendFullState = this.fullStateTimer >= FULL_STATE_INTERVAL;
+    if (sendFullState) this.fullStateTimer = 0;
+    const sendScratchMarks = this.tick % 5 === 0;
 
     const state: NetState = {
       type: 'state',
@@ -300,35 +332,37 @@ export class OnlineGame {
       s2Id: s2.characterId,
       kId: k.characterId,
       s: [
-        s.pos.x, s.pos.y, s.prevX, s.prevY,
+        r(s.pos.x), r(s.pos.y), r(s.prevX), r(s.prevY),
         healthToNum(s.health), dirToNum(s.direction),
-        s.isMoving ? 1 : 0, s.walking ? 1 : 0, s.animTime,
+        s.isMoving ? 1 : 0, s.walking ? 1 : 0, r(s.animTime),
       ],
       s2: [
-        s2.pos.x, s2.pos.y, s2.prevX, s2.prevY,
+        r(s2.pos.x), r(s2.pos.y), r(s2.prevX), r(s2.prevY),
         healthToNum(s2.health), dirToNum(s2.direction),
-        s2.isMoving ? 1 : 0, s2.walking ? 1 : 0, s2.animTime,
+        s2.isMoving ? 1 : 0, s2.walking ? 1 : 0, r(s2.animTime),
       ],
       k: [
-        k.pos.x, k.pos.y, k.prevX, k.prevY,
+        r(k.pos.x), r(k.pos.y), r(k.prevX), r(k.prevY),
         dirToNum(k.direction), k.isMoving ? 1 : 0, k.walking ? 1 : 0,
-        k.stunTimer, k.attackCooldown, k.isCarrying ? 1 : 0, k.animTime,
+        r(k.stunTimer), r(k.attackCooldown), k.isCarrying ? 1 : 0, r(k.animTime),
       ],
-      g: g.generators.map((gen) => [gen.progress, gen.completed ? 1 : 0, gen.beingRepaired ? 1 : 0, gen.regressing ? 1 : 0]),
-      h: g.hooks.map((h) => [h.hooked ? 1 : 0, h.stage, h.stageTimer, h.canSelfUnhook ? 1 : 0, h.rescueProgress]),
-      p: g.pallets.map((p) => [p.dropped ? 1 : 0, p.isDestroyed ? 1 : 0, p.pos.x, p.pos.y, p.width, p.height]),
-      gt: g.exitGates.map((gt) => [gt.powered ? 1 : 0, gt.isOpen ? 1 : 0, gt.openProgress]),
+      g: g.generators.map((gen) => [r(gen.progress), gen.completed ? 1 : 0, gen.beingRepaired ? 1 : 0, gen.regressing ? 1 : 0]),
+      h: g.hooks.map((h) => [h.hooked ? 1 : 0, h.stage, r(h.stageTimer), h.canSelfUnhook ? 1 : 0, r(h.rescueProgress)]),
+      p: g.pallets.map((p) => [p.dropped ? 1 : 0, p.isDestroyed ? 1 : 0, r(p.pos.x), r(p.pos.y), p.width, p.height]),
+      gt: g.exitGates.map((gt) => [gt.powered ? 1 : 0, gt.isOpen ? 1 : 0, r(gt.openProgress)]),
       tr: (g.killerAbility instanceof TrapAbility ? g.killerAbility.traps : [])
-        .map((t) => [t.pos.x, t.pos.y, t.armed ? 1 : 0, t.trapped ? 1 : 0]),
+        .map((t) => [r(t.pos.x), r(t.pos.y), t.armed ? 1 : 0, t.trapped ? 1 : 0]),
       ax: (g.killerAbility instanceof ThrowAxe ? g.killerAbility.axes : [])
         .filter((a) => a.alive)
-        .map((a) => [a.pos.x, a.pos.y, a.alive ? 1 : 0]),
-      sm: g.scratchMarks.allMarks.slice(-30).map((m) => [m.x, m.y, m.age]),
+        .map((a) => [r(a.pos.x), r(a.pos.y), a.alive ? 1 : 0]),
+      sm: sendScratchMarks
+        ? g.scratchMarks.allMarks.slice(-20).map((m) => [r(m.x), r(m.y), r(m.age)])
+        : [],
       sc: this.serializeSkillCheck(g.skillCheck1),
       sc2: this.serializeSkillCheck(g.skillCheck2),
-      sa: [g.survivorAbility?.cooldownRemaining ?? 0, g.survivorAbility?.isActive ? 1 : 0],
-      s2a: [g.survivor2Ability?.cooldownRemaining ?? 0, g.survivor2Ability?.isActive ? 1 : 0],
-      ka: [g.killerAbility?.cooldownRemaining ?? 0, g.killerAbility?.isActive ? 1 : 0],
+      sa: [r(g.survivorAbility?.cooldownRemaining ?? 0), g.survivorAbility?.isActive ? 1 : 0],
+      s2a: [r(g.survivor2Ability?.cooldownRemaining ?? 0), g.survivor2Ability?.isActive ? 1 : 0],
+      ka: [r(g.killerAbility?.cooldownRemaining ?? 0), g.killerAbility?.isActive ? 1 : 0],
     };
 
     this.net.relay(state);

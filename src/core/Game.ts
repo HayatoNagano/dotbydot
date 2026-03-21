@@ -833,8 +833,8 @@ export class Game {
       }
     }
     this.prevPhase = this.phase;
-
-    this.input.endFrame();
+    // Note: input.endFrame() is called by main.ts game loop, not here,
+    // so that main.ts can read wasPressed('KeyR') / wasPressed('Escape') after update.
   }
 
   /** Handle survivor-specific interactions (repair, pallet, locker, skill check, etc.) */
@@ -1012,10 +1012,11 @@ export class Game {
       this.renderer.renderSkillCheck(view, localSC, this.killer);
     }
 
-    // Info panel (DOM-based, fixed at browser bottom)
+    // HUD overlay (Canvas-based, top-left)
     const hookedHook = this.hooks.find((h) => h.hooked === this.survivor) ?? null;
     const hookedHook2 = this.hooks.find((h) => h.hooked === this.survivor2) ?? null;
-    this.infoPanel.update(
+    this.infoPanel.render(
+      this.renderer.ctx,
       this.survivors, this.killer,
       this.generatorsCompleted, this.gatesPowered, this.isRepairing,
       [this.survivorAbility, this.survivor2Ability], this.killerAbility,
