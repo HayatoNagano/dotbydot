@@ -55,7 +55,7 @@ export interface NetState {
   k: number[];
   // Generators: [progress, completed(0/1), repairing(0/1)][]
   g: number[][];
-  // Hooks: [hookedFlag(0/1), stage, timer, canSelfUnhook(0/1)][]
+  // Hooks: [hookedFlag(0/1), stage, timer, canSelfUnhook(0/1), rescueProgress, selfUnhookProgress][]
   h: number[][];
   // Pallets: [dropped(0/1), destroyed(0/1), x, y, w, h][]
   p: number[][];

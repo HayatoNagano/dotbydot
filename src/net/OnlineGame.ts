@@ -24,7 +24,7 @@ import { audioManager } from '../audio/AudioManager';
 import { SkillCheck } from '../ui/SkillCheck';
 import { TICK_DURATION } from '../constants';
 
-const STATE_SEND_INTERVAL = 1 / 30; // 30Hz state updates
+const STATE_SEND_INTERVAL = 1 / 45; // 45Hz state updates (tighter reconciliation)
 const FULL_STATE_INTERVAL = 1;       // Full state every 1s for reliability
 
 /** Buffered snapshot for entity interpolation */
@@ -83,7 +83,7 @@ export class OnlineGame {
   private survivorSnapshots: Snapshot[] = []; // the OTHER survivor
   /** Time tracking for interpolation */
   private interpTime = 0;
-  private readonly INTERP_DELAY = 0.066; // 66ms = 2 state updates at 30Hz
+  private readonly INTERP_DELAY = 0.045; // 45ms = ~2 state updates at 45Hz
   private lastReceivedTick = 0;
 
   constructor(
@@ -441,7 +441,7 @@ export class OnlineGame {
         r(k.stunTimer), r(k.attackCooldown), k.isCarrying ? 1 : 0, r(k.animTime),
       ],
       g: g.generators.map((gen) => [r(gen.progress), gen.completed ? 1 : 0, gen.beingRepaired ? 1 : 0, gen.regressing ? 1 : 0]),
-      h: g.hooks.map((h) => [h.hooked ? 1 : 0, h.stage, r(h.stageTimer), h.canSelfUnhook ? 1 : 0, r(h.rescueProgress)]),
+      h: g.hooks.map((h) => [h.hooked ? 1 : 0, h.stage, r(h.stageTimer), h.canSelfUnhook ? 1 : 0, r(h.rescueProgress), r(h.selfUnhookProgress)]),
       p: g.pallets.map((p) => [p.dropped ? 1 : 0, p.isDestroyed ? 1 : 0, r(p.pos.x), r(p.pos.y), p.width, p.height]),
       gt: g.exitGates.map((gt) => [gt.powered ? 1 : 0, gt.isOpen ? 1 : 0, r(gt.openProgress)]),
       l: g.lockers.map((loc) => loc.occupant === s ? 1 : loc.occupant === s2 ? 2 : 0),
@@ -539,6 +539,8 @@ export class OnlineGame {
       // Save position before reconciliation for visual smoothing
       const beforeX = mySurvivor.pos.x;
       const beforeY = mySurvivor.pos.y;
+      const beforePrevX = mySurvivor.prevX;
+      const beforePrevY = mySurvivor.prevY;
 
       // Discard acknowledged prediction entries
       const ackTick = this.guestIndex === 0 ? state.ackTick : state.ackTick2;
@@ -557,19 +559,28 @@ export class OnlineGame {
         replayPrevY = mySurvivor.pos.y;
         this.replayMove(mySurvivor, entry.dx, entry.dy, entry.walk);
       }
-      mySurvivor.prevX = replayPrevX;
-      mySurvivor.prevY = replayPrevY;
 
-      // Visual smoothing: absorb the position jump into an offset that decays over time
+      // Measure correction after replay
       const jumpX = mySurvivor.pos.x - beforeX;
       const jumpY = mySurvivor.pos.y - beforeY;
       const jumpDist = Math.sqrt(jumpX * jumpX + jumpY * jumpY);
-      if (jumpDist < 50) {
-        // Small correction: smooth it visually
+
+      if (jumpDist < 0.5) {
+        // Negligible error: keep predicted position for perfect smoothness
+        mySurvivor.pos.x = beforeX;
+        mySurvivor.pos.y = beforeY;
+        mySurvivor.prevX = beforePrevX;
+        mySurvivor.prevY = beforePrevY;
+      } else if (jumpDist < 50) {
+        // Small correction: accept reconciled position, smooth visually
+        mySurvivor.prevX = replayPrevX;
+        mySurvivor.prevY = replayPrevY;
         this.smoothOffsetX -= jumpX;
         this.smoothOffsetY -= jumpY;
       } else {
         // Large correction (teleport/stun): snap immediately
+        mySurvivor.prevX = replayPrevX;
+        mySurvivor.prevY = replayPrevY;
         this.smoothOffsetX = 0;
         this.smoothOffsetY = 0;
       }
@@ -626,6 +637,12 @@ export class OnlineGame {
         g.hooks[i].stage = hd[1];
         g.hooks[i].stageTimer = hd[2];
         g.hooks[i].rescueProgress = hd[4] ?? 0;
+        g.hooks[i].selfUnhookProgress = hd[5] ?? 0;
+        // canSelfUnhook is a getter based on hooked survivor's selfUnhookUsed flag
+        // Sync selfUnhookUsed: if host says canSelfUnhook=false but survivor is hooked, mark used
+        if (g.hooks[i].hooked && hd[3] === 0) {
+          g.hooks[i].hooked.selfUnhookUsed = true;
+        }
       }
     });
 

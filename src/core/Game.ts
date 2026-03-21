@@ -1015,6 +1015,8 @@ export class Game {
     // HUD overlay (Canvas-based, top-left)
     const hookedHook = this.hooks.find((h) => h.hooked === this.survivor) ?? null;
     const hookedHook2 = this.hooks.find((h) => h.hooked === this.survivor2) ?? null;
+    const s1InLocker = this.lockers.some((l) => l.occupant === this.survivor);
+    const s2InLocker = this.lockers.some((l) => l.occupant === this.survivor2);
     this.infoPanel.render(
       this.renderer.ctx,
       this.survivors, this.killer,
@@ -1022,6 +1024,7 @@ export class Game {
       [this.survivorAbility, this.survivor2Ability], this.killerAbility,
       [hookedHook, hookedHook2],
       this.playerRole,
+      [s1InLocker, s2InLocker],
     );
 
     if (this.phase !== GamePhase.Playing) {

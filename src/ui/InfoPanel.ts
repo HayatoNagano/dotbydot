@@ -142,6 +142,7 @@ export class InfoPanel {
     killerAbility: Ability | null,
     hookedHooks: (Hook | null)[],
     playerRole: PlayerRole,
+    inLockers: boolean[] = [],
   ): void {
     if (!this.visible) return;
     ctx.save();
@@ -153,6 +154,7 @@ export class InfoPanel {
       curY = this.renderSurvivorCard(
         ctx, curY, survivors[i], survivorAbilities[i] ?? null,
         hookedHooks[i] ?? null, isRepairing && i === 0, i,
+        inLockers[i] ?? false,
       );
       curY += CARD_GAP;
     }
@@ -175,6 +177,7 @@ export class InfoPanel {
     hookedHook: Hook | null,
     isRepairing: boolean,
     index: number,
+    inLocker: boolean = false,
   ): number {
     const def = findDef(survivor.characterId);
     const color = def?.color ?? '#00ff88';
@@ -212,6 +215,9 @@ export class InfoPanel {
     } else if (survivor.isBeingCarried) {
       statusText = '捕獲';
       ctx.fillStyle = '#ff2244';
+    } else if (inLocker) {
+      statusText += ' | 潜伏中';
+      ctx.fillStyle = '#6688cc';
     } else if (isRepairing) {
       statusText += ' | 修理中';
     }
