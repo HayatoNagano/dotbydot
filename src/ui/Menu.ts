@@ -69,6 +69,8 @@ export class Menu {
   onCharSelect: ((defId: string) => void) | null = null;
   /** Set by main.ts when opponent's char_select is received */
   opponentCharDefId: string | null = null;
+  /** Tracks which roles have completed character selection (set by main.ts) */
+  charSelectedRoles: Set<string> = new Set();
   /** Set by main.ts when server sends game_start */
   serverGameStart: { seed: number; survivorDef: string; survivor2Def: string; killerDef: string; survivorColor: string; survivor2Color: string; killerColor: string } | null = null;
 
@@ -192,8 +194,13 @@ export class Menu {
             return this.buildOnlineSelection();
           }
           if (input.wasPressed('Space') || input.wasPressed('Enter')) {
-            // Send start_game to server, wait for game_start response
-            this.onStartGame?.();
+            // Only allow start when all joined players have selected characters
+            const allSelected = Array.from({ length: this.playerCount }, (_, i) =>
+              ['killer', 'survivor1', 'survivor2'][i],
+            ).every((r) => this.charSelectedRoles.has(r));
+            if (allSelected) {
+              this.onStartGame?.();
+            }
           }
         } else if (this.onlineRole === 'guest') {
           // Guest: waiting for join confirmation, then go to survivor select
@@ -269,18 +276,9 @@ export class Menu {
             this.onCharSelect?.(SURVIVOR_DEFS[this.selectedSurvivor].id);
             this.state = MenuState.OnlineCharWait;
             audioManager.playMenuSelect();
-            // If host already started, proceed immediately
-            if (this.gameStarted) {
-              const survivorDef = SURVIVOR_DEFS[this.selectedSurvivor];
-              const killerDef = KILLER_DEFS.find((d) => d.id === this.opponentCharDefId) || KILLER_DEFS[0];
-              this.state = MenuState.Playing;
-              return {
-                mode: this.mode,
-                playerRole: this.playerRole,
-                survivorDef,
-                survivor2Def: otherSurvivorDef(survivorDef),
-                killerDef,
-              };
+            // If server already sent game_start, proceed immediately
+            if (this.gameStarted && this.serverGameStart) {
+              return this.buildOnlineSelection();
             }
             break;
           }
@@ -748,28 +746,46 @@ export class Menu {
       ctx.font = 'bold 28px monospace';
       ctx.fillText(`参加者: ${pc} / 3`, CX, 320);
 
-      // Player slots
+      // Player slots with character selection status
       const slotY = 360;
+      const roles = ['killer', 'survivor1', 'survivor2'] as const;
       const labels = ['キラー (あなた)', 'サバイバー1', 'サバイバー2'];
       const colors = ['#ff2244', '#00ff88', '#00ccff'];
+      let allReady = true;
       for (let i = 0; i < 3; i++) {
         const occupied = i < pc;
+        const charSelected = this.charSelectedRoles.has(roles[i]);
         const y = slotY + i * 36;
-        ctx.fillStyle = occupied ? colors[i] : '#444';
         ctx.font = 'bold 16px monospace';
-        const status = occupied ? (i === 0 ? labels[i] : `${labels[i]} — 参加済み`) : `${labels[i]} — 待機中...`;
-        ctx.fillText(status, CX, y);
+        if (!occupied) {
+          ctx.fillStyle = '#444';
+          ctx.fillText(`${labels[i]} — 待機中...`, CX, y);
+          allReady = false;
+        } else if (!charSelected) {
+          ctx.fillStyle = '#aa8800';
+          ctx.fillText(`${labels[i]} — キャラ選択中...`, CX, y);
+          allReady = false;
+        } else {
+          ctx.fillStyle = colors[i];
+          ctx.fillText(`${labels[i]} — 準備完了`, CX, y);
+        }
       }
 
-      // Start button
+      // Start button — only enabled when all joined players have selected characters
       const startY = 480;
       const blink = Math.sin(Date.now() / 300) * 0.3 + 0.7;
-      ctx.globalAlpha = blink;
-      ctx.fillStyle = full ? '#00ff88' : '#ffcc44';
-      ctx.font = 'bold 20px monospace';
-      const startText = full ? '— SPACE でゲーム開始 (3人対戦) —' : '— SPACE でゲーム開始 (残りはBot) —';
-      ctx.fillText(startText, CX, startY);
-      ctx.globalAlpha = 1;
+      if (allReady) {
+        ctx.globalAlpha = blink;
+        ctx.fillStyle = full ? '#00ff88' : '#ffcc44';
+        ctx.font = 'bold 20px monospace';
+        const startText = full ? '— SPACE でゲーム開始 (3人対戦) —' : '— SPACE でゲーム開始 (残りはBot) —';
+        ctx.fillText(startText, CX, startY);
+        ctx.globalAlpha = 1;
+      } else {
+        ctx.fillStyle = '#555';
+        ctx.font = '16px monospace';
+        ctx.fillText('全員のキャラ選択を待っています...', CX, startY);
+      }
     } else {
       ctx.fillText('接続中...', CX, 280);
     }

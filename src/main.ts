@@ -51,12 +51,14 @@ function setupNetListeners(): void {
         break;
       case 'player_left':
         menu.playerCount = msg.playerCount;
+        menu.charSelectedRoles.delete(msg.role);
         break;
       case 'player_count':
         menu.playerCount = msg.playerCount;
         break;
       case 'char_select':
         menu.opponentCharDefId = String(msg.defId);
+        menu.charSelectedRoles.add(msg.role);
         break;
       case 'game_start':
         // Server started the game — trigger game creation
@@ -112,6 +114,10 @@ menu.onStartGame = () => {
 menu.onCharSelect = (defId: string) => {
   if (netClient) {
     netClient.sendDirect({ type: 'char_select', defId });
+    // Track own selection
+    if (netClient.myRole) {
+      menu.charSelectedRoles.add(netClient.myRole);
+    }
   }
 };
 
@@ -133,6 +139,7 @@ function cleanupOnline(): void {
   menu.guestIndex = 0;
   menu.gameStarted = false;
   menu.serverGameStart = null;
+  menu.charSelectedRoles.clear();
 }
 
 function returnToMenu(): void {

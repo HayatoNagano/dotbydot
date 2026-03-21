@@ -182,6 +182,13 @@ wss.on('connection', (ws) => {
           break;
         }
 
+        // All players must have selected a character
+        const unready = room.players.filter((p) => !p.charDefId);
+        if (unready.length > 0) {
+          sendJSON(ws, { type: 'error', message: '全員のキャラクター選択を待ってください' });
+          break;
+        }
+
         // Build selection from char picks (defaults if not selected)
         const killerSlot = room.players.find((p) => p.role === 'killer');
         const s1Slot = room.players.find((p) => p.role === 'survivor1');

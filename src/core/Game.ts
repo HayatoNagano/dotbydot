@@ -188,14 +188,15 @@ export class Game {
           () => this.gatesPowered,
         );
       }
-    } else if (selection.mode === GameMode.Online) {
-      // Online: host=survivor1, guest=killer, survivor2=AI always
+    } else if (selection.mode === GameMode.Online && !headless) {
+      // Online client: survivor2 AI as fallback (server controls all via guestInput/killerInput)
       this.survivor2AI = new SurvivorAI(
         this.survivor2, this.killer, this.map, this.survivorFog,
         this.generators, this.exitGates, this.hooks, this.lockers,
         () => this.gatesPowered,
       );
     }
+    // headless (dedicated server): no AI — all characters controlled via guestInput/killerInput
 
     eventBus.on('generator_completed', () => {
       this.generatorsCompleted++;
