@@ -181,6 +181,15 @@ export class OnlineGame {
       if (entity) this.interpolateEntity(snapshots, entity);
     }
 
+    // Carried survivor must track killer position exactly (no independent interpolation)
+    const k = this.game.killer;
+    if (k.carrying) {
+      k.carrying.pos.x = k.pos.x;
+      k.carrying.pos.y = k.pos.y - 4;
+      k.carrying.prevX = k.carrying.pos.x;
+      k.carrying.prevY = k.carrying.pos.y;
+    }
+
     // Update fog and camera
     const s = this.game.survivor;
     const s2 = this.game.survivor2;
@@ -284,13 +293,8 @@ export class OnlineGame {
     if (state.s2Id) s2.characterId = state.s2Id;
     if (state.kId) k.characterId = state.kId;
 
-    // ─── My character: server reconciliation with input replay ───
-    this.reconcileMyCharacter(state);
-
-    // ─── Remote characters: buffer for interpolation ───
-    this.bufferRemoteCharacters(state);
-
     // Killer carrying state — k[9]: 0=none, 1=survivor1, 2=survivor2
+    // Must be set BEFORE reconciliation so isBeingCarried is up-to-date
     if (state.k[9] === 1) {
       k.carrying = s;
     } else if (state.k[9] === 2) {
@@ -300,6 +304,12 @@ export class OnlineGame {
     }
     s.isBeingCarried = k.carrying === s;
     s2.isBeingCarried = k.carrying === s2;
+
+    // ─── My character: server reconciliation with input replay ───
+    this.reconcileMyCharacter(state);
+
+    // ─── Remote characters: buffer for interpolation ───
+    this.bufferRemoteCharacters(state);
 
     // Generators
     state.g.forEach((gd, i) => {

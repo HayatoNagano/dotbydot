@@ -71,6 +71,8 @@ export class Menu {
   opponentCharDefId: string | null = null;
   /** Tracks which roles have completed character selection (set by main.ts) */
   charSelectedRoles: Set<string> = new Set();
+  /** Tracks which roles have joined the room (set by main.ts) */
+  joinedRoles: Set<string> = new Set();
   /** Set by main.ts when server sends game_start */
   serverGameStart: { seed: number; survivorDef: string; survivor2Def: string; killerDef: string; survivorColor: string; survivor2Color: string; killerColor: string } | null = null;
 
@@ -194,10 +196,9 @@ export class Menu {
             return this.buildOnlineSelection();
           }
           if (input.wasPressed('Space') || input.wasPressed('Enter')) {
-            // Only allow start when all joined players have selected characters
-            const allSelected = Array.from({ length: this.playerCount }, (_, i) =>
-              ['killer', 'survivor1', 'survivor2'][i],
-            ).every((r) => this.charSelectedRoles.has(r));
+            // All joined players must have selected characters (bots fill remaining)
+            const allSelected = this.joinedRoles.size > 0 &&
+              [...this.joinedRoles].every((r) => this.charSelectedRoles.has(r));
             if (allSelected) {
               this.onStartGame?.();
             }
@@ -749,18 +750,17 @@ export class Menu {
       // Player slots with character selection status
       const slotY = 360;
       const roles = ['killer', 'survivor1', 'survivor2'] as const;
-      const labels = ['キラー (あなた)', 'サバイバー1', 'サバイバー2'];
+      const labels = ['キラー', 'サバイバー1', 'サバイバー2'];
       const colors = ['#ff2244', '#00ff88', '#00ccff'];
       let allReady = true;
       for (let i = 0; i < 3; i++) {
-        const occupied = i < pc;
+        const joined = this.joinedRoles.has(roles[i]);
         const charSelected = this.charSelectedRoles.has(roles[i]);
         const y = slotY + i * 36;
         ctx.font = 'bold 16px monospace';
-        if (!occupied) {
-          ctx.fillStyle = '#444';
-          ctx.fillText(`${labels[i]} — 待機中...`, CX, y);
-          allReady = false;
+        if (!joined) {
+          ctx.fillStyle = '#888';
+          ctx.fillText(`${labels[i]} — Bot`, CX, y);
         } else if (!charSelected) {
           ctx.fillStyle = '#aa8800';
           ctx.fillText(`${labels[i]} — キャラ選択中...`, CX, y);
@@ -774,17 +774,21 @@ export class Menu {
       // Start button — only enabled when all joined players have selected characters
       const startY = 480;
       const blink = Math.sin(Date.now() / 300) * 0.3 + 0.7;
-      if (allReady) {
+      const hasBots = this.joinedRoles.size < 3;
+      if (allReady && this.joinedRoles.size >= 2) {
         ctx.globalAlpha = blink;
-        ctx.fillStyle = full ? '#00ff88' : '#ffcc44';
+        ctx.fillStyle = hasBots ? '#ffcc44' : '#00ff88';
         ctx.font = 'bold 20px monospace';
-        const startText = full ? '— SPACE でゲーム開始 (3人対戦) —' : '— SPACE でゲーム開始 (残りはBot) —';
+        const startText = hasBots ? '— SPACE でゲーム開始 (残りはBot) —' : '— SPACE でゲーム開始 (3人対戦) —';
         ctx.fillText(startText, CX, startY);
         ctx.globalAlpha = 1;
       } else {
         ctx.fillStyle = '#555';
         ctx.font = '16px monospace';
-        ctx.fillText('全員のキャラ選択を待っています...', CX, startY);
+        const waitText = this.joinedRoles.size < 2
+          ? 'プレイヤーの参加を待っています...'
+          : '全員のキャラ選択を待っています...';
+        ctx.fillText(waitText, CX, startY);
       }
     } else {
       ctx.fillText('接続中...', CX, 280);

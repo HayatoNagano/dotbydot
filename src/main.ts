@@ -42,16 +42,22 @@ function setupNetListeners(): void {
     switch (msg.type) {
       case 'room_created':
         menu.roomCode = msg.code;
+        // Host's own role is 'killer'
+        menu.joinedRoles.add('killer');
         break;
       case 'joined':
         menu.opponentJoined = true;
+        // Guest's own role is added
+        if (netClient?.myRole) menu.joinedRoles.add(netClient.myRole);
         break;
       case 'player_joined':
         menu.playerCount = msg.playerCount;
+        if (msg.role) menu.joinedRoles.add(msg.role);
         break;
       case 'player_left':
         menu.playerCount = msg.playerCount;
         menu.charSelectedRoles.delete(msg.role);
+        if (msg.role) menu.joinedRoles.delete(msg.role);
         break;
       case 'player_count':
         menu.playerCount = msg.playerCount;
@@ -140,6 +146,7 @@ function cleanupOnline(): void {
   menu.gameStarted = false;
   menu.serverGameStart = null;
   menu.charSelectedRoles.clear();
+  menu.joinedRoles.clear();
 }
 
 function returnToMenu(): void {

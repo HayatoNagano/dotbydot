@@ -53,11 +53,15 @@ export class ServerRoom {
 
   private callbacks: ServerRoomCallbacks;
 
-  constructor(selection: MenuSelection, callbacks: ServerRoomCallbacks) {
+  /** Roles controlled by bots (no human player) */
+  private botRoles: Set<OnlineRole>;
+
+  constructor(selection: MenuSelection, callbacks: ServerRoomCallbacks, botRoles: OnlineRole[] = []) {
     this.callbacks = callbacks;
+    this.botRoles = new Set(botRoles);
 
     // Create headless game — no canvas, no input, no audio
-    this.game = new Game(null, null, selection, true);
+    this.game = new Game(null, null, selection, true, botRoles);
 
     // Sound events → broadcast to all clients
     this.game.soundCallback = (name: string) => {
@@ -93,19 +97,19 @@ export class ServerRoom {
   }
 
   private serverTick(): void {
-    // Inject inputs
-    const s1Input = this.inputs.survivor1;
-    const s2Input = this.inputs.survivor2;
-    const kInput = this.inputs.killer;
-
-    this.game.guest1Input = s1Input;
-    this.game.guest2Input = s2Input;
-    this.game.killerInput = kInput;
-
-    // Clear one-shot flags after consumption
-    this.inputs.survivor1 = { ...s1Input, interact: false, ability: false, space: false };
-    this.inputs.survivor2 = { ...s2Input, interact: false, ability: false, space: false };
-    this.inputs.killer = { ...kInput, interact: false, ability: false, space: false };
+    // Inject inputs — skip bot roles (they use AI in Game)
+    if (!this.botRoles.has('survivor1')) {
+      this.game.guest1Input = this.inputs.survivor1;
+      this.inputs.survivor1 = { ...this.inputs.survivor1, interact: false, ability: false, space: false };
+    }
+    if (!this.botRoles.has('survivor2')) {
+      this.game.guest2Input = this.inputs.survivor2;
+      this.inputs.survivor2 = { ...this.inputs.survivor2, interact: false, ability: false, space: false };
+    }
+    if (!this.botRoles.has('killer')) {
+      this.game.killerInput = this.inputs.killer;
+      this.inputs.killer = { ...this.inputs.killer, interact: false, ability: false, space: false };
+    }
 
     // Run simulation
     this.game.update(TICK_DURATION);

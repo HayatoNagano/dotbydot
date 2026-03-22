@@ -143,10 +143,13 @@ wss.on('connection', (ws) => {
           }
         }
 
-        // Send existing char selections to the new player
+        // Send existing players' roles and char selections to the new player
         for (const p of room.players) {
-          if (p.ws !== ws && p.charDefId) {
-            sendJSON(ws, { type: 'char_select', role: p.role, defId: p.charDefId });
+          if (p.ws !== ws) {
+            sendJSON(ws, { type: 'player_joined', playerCount, role: p.role });
+            if (p.charDefId) {
+              sendJSON(ws, { type: 'char_select', role: p.role, defId: p.charDefId });
+            }
           }
         }
 
@@ -200,6 +203,12 @@ wss.on('connection', (ws) => {
           killerSlot?.charDefId ?? 'trap',
         );
 
+        // Determine which roles are bots (no human player)
+        const botRoles: OnlineRole[] = [];
+        if (!s1Slot) botRoles.push('survivor1');
+        if (!s2Slot) botRoles.push('survivor2');
+        if (!killerSlot) botRoles.push('killer');
+
         // Create ServerRoom with headless game
         room.serverRoom = new ServerRoom(selection, {
           sendState: (_role, state) => {
@@ -218,7 +227,7 @@ wss.on('connection', (ws) => {
               sendRaw(p.ws, data);
             }
           },
-        });
+        }, botRoles);
 
         // Notify all clients
         const seed = room.serverRoom.game.map.seed;

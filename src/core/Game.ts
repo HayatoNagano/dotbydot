@@ -116,7 +116,7 @@ export class Game {
   private kickTimer = 0;
   private static readonly KICK_DURATION = 1.0;
 
-  constructor(canvas: HTMLCanvasElement | null, input: Input | null, selection: MenuSelection, headless = false) {
+  constructor(canvas: HTMLCanvasElement | null, input: Input | null, selection: MenuSelection, headless = false, botRoles: string[] = []) {
     this.selection = selection;
     this.headless = headless;
     this.playerRole = selection.playerRole;
@@ -188,6 +188,28 @@ export class Game {
           () => this.gatesPowered,
         );
       }
+    } else if (selection.mode === GameMode.Online && headless && botRoles.length > 0) {
+      // Dedicated server: set up AI for bot-controlled roles
+      if (botRoles.includes('survivor1')) {
+        this.survivorAI = new SurvivorAI(
+          this.survivor, this.killer, this.map, this.survivorFog,
+          this.generators, this.exitGates, this.hooks, this.lockers,
+          () => this.gatesPowered,
+        );
+      }
+      if (botRoles.includes('survivor2')) {
+        this.survivor2AI = new SurvivorAI(
+          this.survivor2, this.killer, this.map, this.survivorFog,
+          this.generators, this.exitGates, this.hooks, this.lockers,
+          () => this.gatesPowered,
+        );
+      }
+      if (botRoles.includes('killer')) {
+        this.killerAI = new KillerAI(
+          this.killer, this.survivors, this.map, this.killerFog,
+          this.scratchMarks, this.hooks, this.generators,
+        );
+      }
     } else if (selection.mode === GameMode.Online && !headless) {
       // Online client: survivor2 AI as fallback (server controls all via guestInput/killerInput)
       this.survivor2AI = new SurvivorAI(
@@ -196,7 +218,7 @@ export class Game {
         () => this.gatesPowered,
       );
     }
-    // headless (dedicated server): no AI — all characters controlled via guestInput/killerInput
+    // headless (dedicated server) without bots: no AI — all characters controlled via guestInput/killerInput
 
     eventBus.on('generator_completed', () => {
       this.generatorsCompleted++;
