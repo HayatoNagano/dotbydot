@@ -110,13 +110,77 @@ export interface NetState {
   ackTickK: number;
 }
 
+/**
+ * Server → Clients: Delta game state snapshot.
+ * Only changed fields are included. Client merges onto last full state.
+ */
+export interface NetDeltaState {
+  type: 'delta';
+  tick: number;
+  /** Bitmask indicating which field groups are included */
+  mask: number;
+  // Fields below are optional — only present if corresponding mask bit is set
+  phase?: string;
+  gensCompleted?: number;
+  gatesPowered?: boolean;
+  inChase?: boolean;
+  terrorIntensity?: number;
+  sId?: string;
+  s2Id?: string;
+  kId?: string;
+  s?: number[];
+  s2?: number[];
+  k?: number[];
+  g?: number[][];
+  h?: number[][];
+  p?: number[][];
+  gt?: number[][];
+  l?: number[];
+  cl?: number[];
+  tr?: number[][];
+  ax?: number[][];
+  sm?: number[][];
+  sc?: NetState['sc'];
+  sc2?: NetState['sc2'];
+  sa?: number[];
+  s2a?: number[];
+  ka?: number[];
+  ackTick: number;
+  ackTick2: number;
+  ackTickK: number;
+}
+
+/** Bitmask constants for delta state field groups */
+export const DELTA_MASK = {
+  PHASE:   1 << 0,
+  S:       1 << 1,
+  S2:      1 << 2,
+  K:       1 << 3,
+  G:       1 << 4,
+  H:       1 << 5,
+  P:       1 << 6,
+  GT:      1 << 7,
+  L:       1 << 8,
+  TR:      1 << 9,
+  AX:      1 << 10,
+  SM:      1 << 11,
+  SC:      1 << 12,
+  SC2:     1 << 13,
+  SA:      1 << 14,
+  S2A:     1 << 15,
+  KA:      1 << 16,
+  CL:      1 << 17,
+  CHASE:   1 << 18,
+  IDS:     1 << 19,
+} as const;
+
 /** Server → Client: Sound effect trigger */
 export interface NetSound {
   type: 'sound';
   name: string;
 }
 
-export type NetMessage = NetGameStart | NetInput | NetState | NetSound | NetCharSelect | NetReady | NetStartGame | NetSkillCheckResult;
+export type NetMessage = NetGameStart | NetInput | NetState | NetDeltaState | NetSound | NetCharSelect | NetReady | NetStartGame | NetSkillCheckResult;
 
 // ─── Helpers ───
 

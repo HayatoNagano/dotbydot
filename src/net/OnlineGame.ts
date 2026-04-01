@@ -12,8 +12,8 @@ import { Game } from '../core/Game';
 import { Input } from '../core/Input';
 import { NetworkClient, ServerMessage } from './NetworkClient';
 import {
-  NetState, NetInput, NetMessage, NetSkillCheckResult, OnlineRole,
-  numToDir, numToHealth,
+  NetState, NetDeltaState, NetInput, NetMessage, NetSkillCheckResult, OnlineRole,
+  DELTA_MASK, numToDir, numToHealth,
 } from './protocol';
 import { HealthState, GamePhase, Direction, type MenuSelection } from '../types';
 import { TrapAbility } from '../abilities/TrapAbility';
@@ -67,7 +67,13 @@ export class OnlineGame {
   /** Interpolation buffers for remote characters */
   private interpBuffers: Map<string, Snapshot[]> = new Map();
   private interpTime = 0;
-  private readonly INTERP_DELAY = 0.045; // 45ms
+  /** Dynamic interpolation delay — adapts to measured RTT */
+  private interpDelay = 0.045; // initial 45ms
+  private readonly MIN_INTERP_DELAY = 0.030; // 30ms floor
+  private readonly MAX_INTERP_DELAY = 0.150; // 150ms ceiling
+
+  /** Last full state for delta merging */
+  private lastFullState: NetState | null = null;
 
   /** Previous sent input for deduplication */
   private prevSentInput: NetInput = { ...EMPTY_INPUT };
@@ -106,19 +112,84 @@ export class OnlineGame {
 
   private onMessage(msg: ServerMessage): void {
     if (msg.type === 'state') {
-      this.applyState(msg as unknown as NetState);
+      const state = msg as unknown as NetState;
+      this.lastFullState = state;
+      this.applyState(state);
+    } else if (msg.type === 'delta') {
+      const merged = this.mergeDelta(msg as unknown as NetDeltaState);
+      if (merged) this.applyState(merged);
     } else if (msg.type === 'sound') {
       this.playSound(msg.name);
     } else if (msg.type === 'relay' && msg.data) {
       // Legacy relay compat
       const data = msg.data as NetMessage;
-      if (data.type === 'state') this.applyState(data);
-      else if (data.type === 'sound') this.playSound(data.name);
+      if (data.type === 'state') {
+        this.lastFullState = data;
+        this.applyState(data);
+      } else if (data.type === 'delta') {
+        const merged = this.mergeDelta(data);
+        if (merged) this.applyState(merged);
+      } else if (data.type === 'sound') this.playSound(data.name);
     }
+  }
+
+  /** Merge a delta state onto the last full state */
+  private mergeDelta(delta: NetDeltaState): NetState | null {
+    if (!this.lastFullState) return null; // Can't merge without a base
+    const m = delta.mask;
+    const s = { ...this.lastFullState };
+
+    s.tick = delta.tick;
+    s.ackTick = delta.ackTick;
+    s.ackTick2 = delta.ackTick2;
+    s.ackTickK = delta.ackTickK;
+
+    if (m & DELTA_MASK.PHASE) {
+      s.phase = delta.phase!;
+      s.gensCompleted = delta.gensCompleted!;
+      s.gatesPowered = delta.gatesPowered!;
+    }
+    if (m & DELTA_MASK.CHASE) s.inChase = delta.inChase!;
+    if (m & DELTA_MASK.IDS) {
+      s.sId = delta.sId!;
+      s.s2Id = delta.s2Id!;
+      s.kId = delta.kId!;
+    }
+    if (m & DELTA_MASK.S) s.s = delta.s!;
+    if (m & DELTA_MASK.S2) s.s2 = delta.s2!;
+    if (m & DELTA_MASK.K) s.k = delta.k!;
+    if (m & DELTA_MASK.G) s.g = delta.g!;
+    if (m & DELTA_MASK.H) s.h = delta.h!;
+    if (m & DELTA_MASK.P) s.p = delta.p!;
+    if (m & DELTA_MASK.GT) s.gt = delta.gt!;
+    if (m & DELTA_MASK.L) s.l = delta.l!;
+    if (m & DELTA_MASK.CL) s.cl = delta.cl!;
+    if (m & DELTA_MASK.TR) s.tr = delta.tr!;
+    if (m & DELTA_MASK.AX) s.ax = delta.ax!;
+    if (m & DELTA_MASK.SM) s.sm = delta.sm!;
+    else s.sm = []; // scratch marks not included = empty
+    if (m & DELTA_MASK.SC) s.sc = delta.sc!;
+    if (m & DELTA_MASK.SC2) s.sc2 = delta.sc2!;
+    if (m & DELTA_MASK.SA) s.sa = delta.sa!;
+    if (m & DELTA_MASK.S2A) s.s2a = delta.s2a!;
+    if (m & DELTA_MASK.KA) s.ka = delta.ka!;
+
+    this.lastFullState = s;
+    return s;
   }
 
   update(dt: number): void {
     this.interpTime += dt;
+
+    // Adapt interpolation delay to network conditions
+    // Target: half RTT + 1 state interval (22ms) as jitter buffer
+    const rttMs = this.net.rtt;
+    if (rttMs > 0) {
+      const target = (rttMs / 2 + 22) / 1000; // seconds
+      const clamped = Math.max(this.MIN_INTERP_DELAY, Math.min(this.MAX_INTERP_DELAY, target));
+      // Smooth transition to avoid jitter
+      this.interpDelay += (clamped - this.interpDelay) * 0.05;
+    }
 
     // Decay visual smooth offset each tick
     this.smoothOffsetX *= 0.85;
@@ -645,7 +716,7 @@ export class OnlineGame {
   private interpolateEntity(snapshots: Snapshot[], entity: { pos: { x: number; y: number }; prevX: number; prevY: number; isMoving: boolean; walking: boolean; direction: Direction; animTime: number }): void {
     if (snapshots.length < 2) return;
 
-    const renderTime = this.interpTime - this.INTERP_DELAY;
+    const renderTime = this.interpTime - this.interpDelay;
     let from: Snapshot | null = null;
     let to: Snapshot | null = null;
 

@@ -4,7 +4,7 @@
  */
 
 import { Game } from '../core/Game';
-import { NetState } from './protocol';
+import { NetState, NetDeltaState, DELTA_MASK } from './protocol';
 import { healthToNum, dirToNum } from './protocol';
 import { SkillCheck } from '../ui/SkillCheck';
 import { TrapAbility } from '../abilities/TrapAbility';
@@ -110,4 +110,146 @@ export function serializeGameState(
   };
 
   return state;
+}
+
+/** Compare two number arrays element-by-element */
+function arraysEqual(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/** Compare two 2D number arrays */
+function arrays2DEqual(a: number[][], b: number[][]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (!arraysEqual(a[i], b[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * Compute a delta state by comparing current and previous full states.
+ * Only changed field groups are included, identified by bitmask.
+ */
+export function computeDeltaState(
+  current: NetState,
+  previous: NetState,
+): NetDeltaState {
+  let mask = 0;
+  const delta: NetDeltaState = {
+    type: 'delta',
+    tick: current.tick,
+    mask: 0,
+    ackTick: current.ackTick,
+    ackTick2: current.ackTick2,
+    ackTickK: current.ackTickK,
+  };
+
+  // Phase / global state
+  if (current.phase !== previous.phase
+    || current.gensCompleted !== previous.gensCompleted
+    || current.gatesPowered !== previous.gatesPowered) {
+    mask |= DELTA_MASK.PHASE;
+    delta.phase = current.phase;
+    delta.gensCompleted = current.gensCompleted;
+    delta.gatesPowered = current.gatesPowered;
+  }
+
+  // Chase
+  if (current.inChase !== previous.inChase) {
+    mask |= DELTA_MASK.CHASE;
+    delta.inChase = current.inChase;
+  }
+
+  // Character IDs (rarely change)
+  if (current.sId !== previous.sId || current.s2Id !== previous.s2Id || current.kId !== previous.kId) {
+    mask |= DELTA_MASK.IDS;
+    delta.sId = current.sId;
+    delta.s2Id = current.s2Id;
+    delta.kId = current.kId;
+  }
+
+  // Characters — always include (high priority, positions change constantly)
+  if (!arraysEqual(current.s, previous.s)) {
+    mask |= DELTA_MASK.S;
+    delta.s = current.s;
+  }
+  if (!arraysEqual(current.s2, previous.s2)) {
+    mask |= DELTA_MASK.S2;
+    delta.s2 = current.s2;
+  }
+  if (!arraysEqual(current.k, previous.k)) {
+    mask |= DELTA_MASK.K;
+    delta.k = current.k;
+  }
+
+  // World objects
+  if (!arrays2DEqual(current.g, previous.g)) {
+    mask |= DELTA_MASK.G;
+    delta.g = current.g;
+  }
+  if (!arrays2DEqual(current.h, previous.h)) {
+    mask |= DELTA_MASK.H;
+    delta.h = current.h;
+  }
+  if (!arrays2DEqual(current.p, previous.p)) {
+    mask |= DELTA_MASK.P;
+    delta.p = current.p;
+  }
+  if (!arrays2DEqual(current.gt, previous.gt)) {
+    mask |= DELTA_MASK.GT;
+    delta.gt = current.gt;
+  }
+  if (!arraysEqual(current.l, previous.l)) {
+    mask |= DELTA_MASK.L;
+    delta.l = current.l;
+  }
+  if (!arraysEqual(current.cl, previous.cl)) {
+    mask |= DELTA_MASK.CL;
+    delta.cl = current.cl;
+  }
+  if (!arrays2DEqual(current.tr, previous.tr)) {
+    mask |= DELTA_MASK.TR;
+    delta.tr = current.tr;
+  }
+  if (!arrays2DEqual(current.ax, previous.ax)) {
+    mask |= DELTA_MASK.AX;
+    delta.ax = current.ax;
+  }
+
+  // Scratch marks — include if non-empty
+  if (current.sm.length > 0) {
+    mask |= DELTA_MASK.SM;
+    delta.sm = current.sm;
+  }
+
+  // Skill checks
+  if (JSON.stringify(current.sc) !== JSON.stringify(previous.sc)) {
+    mask |= DELTA_MASK.SC;
+    delta.sc = current.sc;
+  }
+  if (JSON.stringify(current.sc2) !== JSON.stringify(previous.sc2)) {
+    mask |= DELTA_MASK.SC2;
+    delta.sc2 = current.sc2;
+  }
+
+  // Abilities
+  if (!arraysEqual(current.sa, previous.sa)) {
+    mask |= DELTA_MASK.SA;
+    delta.sa = current.sa;
+  }
+  if (!arraysEqual(current.s2a, previous.s2a)) {
+    mask |= DELTA_MASK.S2A;
+    delta.s2a = current.s2a;
+  }
+  if (!arraysEqual(current.ka, previous.ka)) {
+    mask |= DELTA_MASK.KA;
+    delta.ka = current.ka;
+  }
+
+  delta.mask = mask;
+  return delta;
 }

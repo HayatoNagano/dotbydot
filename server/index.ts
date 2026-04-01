@@ -263,6 +263,11 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'ping': {
+        sendJSON(ws, { type: 'pong', t: msg.t });
+        break;
+      }
+
       // ─── Legacy relay support (for backward compat during transition) ───
       case 'relay': {
         const info = playerMap.get(ws);

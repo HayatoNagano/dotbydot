@@ -16,6 +16,8 @@ export type ServerMessage =
   | { type: 'game_start'; seed: number; survivorDef: string; survivor2Def: string; killerDef: string; survivorColor: string; survivor2Color: string; killerColor: string }
   | { type: 'char_select'; role: OnlineRole; defId: string }
   | { type: 'state'; [key: string]: unknown }
+  | { type: 'delta'; [key: string]: unknown }
+  | { type: 'pong'; t: number }
   | { type: 'sound'; name: string }
   | { type: 'error'; message: string };
 
@@ -32,6 +34,13 @@ export class NetworkClient {
   /** Current player count in the room */
   playerCount = 1;
 
+  // ─── RTT measurement ───
+  /** Smoothed RTT in milliseconds */
+  rtt = 0;
+  private rttSamples: number[] = [];
+  private readonly RTT_SAMPLE_COUNT = 10;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
+
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.error = null;
@@ -45,6 +54,7 @@ export class NetworkClient {
 
       this.ws.onopen = () => {
         this.connected = true;
+        this.startRttMeasurement();
         resolve();
       };
 
@@ -52,6 +62,7 @@ export class NetworkClient {
         this.connected = false;
         this.roomCode = null;
         this.myRole = null;
+        this.stopRttMeasurement();
       };
 
       this.ws.onerror = () => {
@@ -72,6 +83,19 @@ export class NetworkClient {
 
   private handleServerMessage(msg: ServerMessage): void {
     switch (msg.type) {
+      case 'pong': {
+        const sent = msg.t;
+        if (sent) {
+          const sample = performance.now() - sent;
+          this.rttSamples.push(sample);
+          if (this.rttSamples.length > this.RTT_SAMPLE_COUNT) {
+            this.rttSamples.shift();
+          }
+          // Smoothed RTT: average of samples
+          this.rtt = this.rttSamples.reduce((a, b) => a + b, 0) / this.rttSamples.length;
+        }
+        break;
+      }
       case 'room_created':
         this.roomCode = msg.code;
         if (msg.role) this.myRole = msg.role;
@@ -131,7 +155,24 @@ export class NetworkClient {
     }
   }
 
+  private startRttMeasurement(): void {
+    this.sendPing();
+    this.pingTimer = setInterval(() => this.sendPing(), 1000);
+  }
+
+  private stopRttMeasurement(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+  }
+
+  private sendPing(): void {
+    this.send({ type: 'ping', t: performance.now() });
+  }
+
   disconnect(): void {
+    this.stopRttMeasurement();
     if (this.ws) {
       this.send({ type: 'leave' });
       this.ws.close();

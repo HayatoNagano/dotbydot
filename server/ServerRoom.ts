@@ -10,13 +10,24 @@
  */
 
 import { Game } from '../src/core/Game';
-import { NetInput, NetState, OnlineRole } from '../src/net/protocol';
-import { serializeGameState } from '../src/net/stateSerializer';
+import { NetInput, NetState, NetDeltaState, DELTA_MASK, OnlineRole } from '../src/net/protocol';
+import { serializeGameState, computeDeltaState } from '../src/net/stateSerializer';
 import { TICK_DURATION } from '../src/constants';
 import { GameMode, PlayerRole, type MenuSelection, SURVIVOR_DEFS, KILLER_DEFS } from '../src/types';
 
 const STATE_SEND_HZ = 45;
 const TICKS_PER_STATE = Math.round(60 / STATE_SEND_HZ); // ~1.33 → every 1-2 ticks
+
+/**
+ * Low-priority world objects are sent every Nth state broadcast (~15Hz).
+ * Character positions (high priority) are sent every broadcast (~45Hz).
+ */
+const WORLD_SEND_INTERVAL = 3; // 45Hz / 3 = 15Hz
+
+/** Bitmask for low-priority world object fields */
+const LOW_PRIORITY_MASK =
+  DELTA_MASK.G | DELTA_MASK.H | DELTA_MASK.P | DELTA_MASK.GT |
+  DELTA_MASK.L | DELTA_MASK.TR | DELTA_MASK.AX | DELTA_MASK.CL;
 
 const EMPTY_INPUT: NetInput = {
   type: 'input', dx: 0, dy: 0,
@@ -27,15 +38,23 @@ export interface ServerRoomCallbacks {
   /** Send state to a specific role's client */
   sendState: (role: OnlineRole, state: NetState) => void;
   /** Broadcast state to all connected clients */
-  broadcastState: (state: NetState) => void;
+  broadcastState: (state: NetState | NetDeltaState) => void;
   /** Broadcast sound event to all clients */
   broadcastSound: (name: string) => void;
 }
+
+/** Send full state every N state broadcasts for delta sync recovery */
+const FULL_STATE_INTERVAL = 30; // ~every 0.67s at 45Hz
 
 export class ServerRoom {
   readonly game: Game;
   private tickInterval: ReturnType<typeof setInterval>;
   private tick = 0;
+
+  /** Previous full state for delta computation */
+  private prevState: NetState | null = null;
+  /** Counter for full state sends */
+  private stateBroadcastCount = 0;
 
   /** Current input per role */
   private inputs: Record<OnlineRole, NetInput> = {
@@ -124,7 +143,55 @@ export class ServerRoom {
         [this.lastClientTick.survivor1, this.lastClientTick.survivor2, this.lastClientTick.killer],
         sendScratchMarks,
       );
-      this.callbacks.broadcastState(state);
+
+      this.stateBroadcastCount++;
+      const isFullSync = !this.prevState || this.stateBroadcastCount % FULL_STATE_INTERVAL === 0;
+
+      if (isFullSync) {
+        // Send full state periodically for sync recovery
+        this.callbacks.broadcastState(state);
+        this.prevState = state;
+      } else {
+        // Send delta only
+        const delta = computeDeltaState(state, this.prevState);
+
+        // Priority-based rate control: strip low-priority world objects on non-world ticks.
+        // When stripping, do NOT update prevState for those fields — keep the old baseline
+        // so the change is re-detected on the next world tick.
+        const isWorldTick = this.stateBroadcastCount % WORLD_SEND_INTERVAL === 0;
+        if (!isWorldTick) {
+          delta.mask &= ~LOW_PRIORITY_MASK;
+          delete delta.g;
+          delete delta.h;
+          delete delta.p;
+          delete delta.gt;
+          delete delta.l;
+          delete delta.tr;
+          delete delta.ax;
+          delete delta.cl;
+
+          // Partial prevState update: only high-priority fields advance
+          this.prevState = {
+            ...this.prevState,
+            tick: state.tick,
+            phase: state.phase,
+            gensCompleted: state.gensCompleted,
+            gatesPowered: state.gatesPowered,
+            inChase: state.inChase,
+            sId: state.sId, s2Id: state.s2Id, kId: state.kId,
+            s: state.s, s2: state.s2, k: state.k,
+            sm: state.sm,
+            sc: state.sc, sc2: state.sc2,
+            sa: state.sa, s2a: state.s2a, ka: state.ka,
+            ackTick: state.ackTick, ackTick2: state.ackTick2, ackTickK: state.ackTickK,
+          };
+        } else {
+          // World tick: update everything
+          this.prevState = state;
+        }
+
+        this.callbacks.broadcastState(delta);
+      }
     }
   }
 
