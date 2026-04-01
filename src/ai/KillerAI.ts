@@ -207,6 +207,10 @@ export class KillerAI implements AIController {
         result = this.doPatrol(dt, killerTX, killerTY);
         // Patrol at walking speed — not sprinting around the map
         result.walk = true;
+        // Wraith: cloak while patrolling
+        if (this.killer.characterId === 'wraith' && this.killer.cloakState === 2) {
+          result.ability = true;
+        }
         break;
 
       case KillerState.Investigate:
@@ -221,8 +225,15 @@ export class KillerAI implements AIController {
         if (distToSurvivor < TILE_SIZE * 1.8) {
           result.interact = true; // Attack
         }
-        // Use ability less aggressively — only when medium range and with some randomness
-        if (distToSurvivor < TILE_SIZE * 7 && distToSurvivor > TILE_SIZE * 4 && Math.random() < 0.02) {
+        if (this.killer.characterId === 'wraith') {
+          // Wraith AI: uncloak when close to attack, re-cloak when far
+          if (this.killer.cloakState === 0 && distToSurvivor < TILE_SIZE * 4) {
+            result.ability = true; // uncloak to attack
+          } else if (this.killer.cloakState === 2 && distToSurvivor > TILE_SIZE * 10) {
+            result.ability = true; // re-cloak when lost target
+          }
+        } else if (distToSurvivor < TILE_SIZE * 7 && distToSurvivor > TILE_SIZE * 4 && Math.random() < 0.02) {
+          // Other killers: use ability less aggressively
           result.ability = true;
         }
         break;

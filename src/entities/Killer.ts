@@ -9,6 +9,10 @@ export class Killer extends Character {
   stunTimer = 0;
   carrying: Survivor | null = null;
   characterId: string = 'trapper';
+  /** Cloak state for Wraith: 0=Cloaked, 1=Uncloaking, 2=Uncloaked, 3=Cloaking */
+  cloakState = 2; // default uncloaked (CloakAbility overrides to 0 on init)
+  /** Cloak visibility: 0=invisible, 1=fully visible */
+  cloakProgress = 1;
   private static readonly ATTACK_COOLDOWN = 1.5; // seconds
   private static readonly ATTACK_RANGE = TILE_SIZE * 1.5;
   private static readonly STUN_DURATION = 2.0;
@@ -22,7 +26,8 @@ export class Killer extends Character {
   }
 
   get canAttack(): boolean {
-    return this.attackCooldown <= 0 && !this.isStunned && this.carrying === null;
+    return this.attackCooldown <= 0 && !this.isStunned && this.carrying === null
+      && (this.characterId !== 'wraith' || this.cloakState === 2);
   }
 
   get isCarrying(): boolean {
@@ -125,9 +130,10 @@ export class Killer extends Character {
     const frame = this.isMoving ? (Math.floor(this.animTime * 2) % 4) : 0;
     const bob = this.isMoving ? (frame === 1 || frame === 3 ? -p : 0) : 0;
 
-    const baseColor = this.isStunned ? '#772233' : this.color;
-    const baseDark = this.isStunned ? '#551122' : '#880011';
-    const baseVDark = this.isStunned ? '#330011' : '#440011';
+    const isWraith = this.characterId === 'wraith';
+    const baseColor = this.isStunned ? '#772233' : isWraith ? '#445566' : this.color;
+    const baseDark = this.isStunned ? '#551122' : isWraith ? '#334455' : '#880011';
+    const baseVDark = this.isStunned ? '#330011' : isWraith ? '#223344' : '#440011';
     const skinColor = this.isStunned ? '#887766' : '#bba090';
     const skinDark = this.isStunned ? '#665544' : '#997060';
 
@@ -255,7 +261,16 @@ export class Killer extends Character {
     ctx.fillStyle = '#888';
     ctx.fillRect(cx - p, bodyY + bodyH - p, 2 * p, p);
     // Shoulder pads
-    if (this.characterId === 'huntress') {
+    if (this.characterId === 'wraith') {
+      // Wraith: tattered cloth shoulders
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(bodyX - p, bodyY, p, 2 * p);
+      ctx.fillRect(bodyX + bodyW, bodyY, p, 2 * p);
+      // Tattered edges
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(bodyX - p, bodyY + 2 * p, p, p);
+      ctx.fillRect(bodyX + bodyW, bodyY + 2 * p, p, p);
+    } else if (this.characterId === 'huntress') {
       // Huntress: less bulky shoulders (1p instead of 2p tall)
       ctx.fillStyle = baseDark;
       ctx.fillRect(bodyX - p, bodyY, p, p);
@@ -298,7 +313,17 @@ export class Killer extends Character {
     if (!this.isStunned) {
       const wepX = bodyX + bodyW + armW;
       const wepSwing = armSwing;
-      if (this.characterId === 'huntress') {
+      if (this.characterId === 'wraith') {
+        // Wraith: wailing bell
+        ctx.fillStyle = '#6B4226';
+        ctx.fillRect(wepX, bodyY + wepSwing, p, 3 * p); // handle
+        ctx.fillStyle = '#ccaa44';
+        ctx.fillRect(wepX - p, bodyY + 3 * p + wepSwing, 3 * p, 2 * p); // bell body
+        ctx.fillStyle = '#eedd66';
+        ctx.fillRect(wepX - p, bodyY + 3 * p + wepSwing, 3 * p, p); // bell top highlight
+        ctx.fillStyle = '#aa8833';
+        ctx.fillRect(wepX, bodyY + 5 * p + wepSwing, p, p); // clapper
+      } else if (this.characterId === 'huntress') {
         // Huntress: hatchet — shorter handle, smaller blade
         ctx.fillStyle = '#6B4226';
         ctx.fillRect(wepX, bodyY + wepSwing, p, 2 * p);
@@ -328,7 +353,35 @@ export class Killer extends Character {
     }
 
     // ── Head ──
-    if (this.characterId === 'huntress') {
+    if (this.characterId === 'wraith') {
+      // Wraith: skull-like face with hood
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(headX - p, headY, headW + 2 * p, headH + p); // hood
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(headX, headY + p, headW, headH - p); // inner hood
+      // Skull face
+      ctx.fillStyle = '#ccbbaa';
+      ctx.fillRect(headX + p, headY + 2 * p, headW - 2 * p, headH - 3 * p);
+      // Eye sockets
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(headX + 2 * p, headY + 3 * p, p, p);
+      ctx.fillRect(headX + headW - 3 * p, headY + 3 * p, p, p);
+      // Glowing cyan eyes
+      if (!this.isStunned) {
+        const eyeRow = headY + 3 * p;
+        const flicker = 0.6 + Math.sin(Date.now() / 250) * 0.4;
+        ctx.fillStyle = `rgba(0, 255, 200, ${flicker * 0.2})`;
+        ctx.fillRect(headX + p, eyeRow - p, headW - 2 * p, 3 * p);
+        ctx.globalAlpha = flicker;
+        ctx.fillStyle = '#00ffcc';
+        ctx.fillRect(headX + 2 * p, eyeRow, p, p);
+        ctx.fillRect(headX + headW - 3 * p, eyeRow, p, p);
+        ctx.globalAlpha = 1;
+      }
+      // Nose hole
+      ctx.fillStyle = '#1a1a1a';
+      ctx.fillRect(cx - Math.floor(p / 2), headY + 4 * p, p, Math.floor(p / 2));
+    } else if (this.characterId === 'huntress') {
       // Huntress: rabbit mask/helmet
       const maskColor = '#886655';
       const faceColor = '#aa9988';
@@ -460,7 +513,14 @@ export class Killer extends Character {
     ctx.fillStyle = '#444';
     ctx.fillRect(bodyX, bodyY + bodyH - p, bodyW, p);
     // Shoulder pads (back)
-    if (this.characterId === 'huntress') {
+    if (this.characterId === 'wraith') {
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(bodyX - p, bodyY, p, 2 * p);
+      ctx.fillRect(bodyX + bodyW, bodyY, p, 2 * p);
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(bodyX - p, bodyY + 2 * p, p, p);
+      ctx.fillRect(bodyX + bodyW, bodyY + 2 * p, p, p);
+    } else if (this.characterId === 'huntress') {
       ctx.fillStyle = baseDark;
       ctx.fillRect(bodyX - p, bodyY, p, p);
       ctx.fillRect(bodyX + bodyW, bodyY, p, p);
@@ -488,7 +548,18 @@ export class Killer extends Character {
 
     // ── Weapon slung on back ──
     if (!this.isStunned) {
-      if (this.characterId === 'huntress') {
+      if (this.characterId === 'wraith') {
+        // Wraith: bell on back
+        ctx.fillStyle = '#6B4226';
+        ctx.fillRect(cx - p, bodyY + p, p, 2 * p);
+        ctx.fillStyle = '#ccaa44';
+        ctx.fillRect(cx - 2 * p, bodyY - p, 3 * p, 2 * p);
+        ctx.fillStyle = '#eedd66';
+        ctx.fillRect(cx - 2 * p, bodyY - p, 3 * p, p);
+        // Strap
+        ctx.fillStyle = '#554433';
+        ctx.fillRect(bodyX + p, bodyY + p, bodyW - 2 * p, p);
+      } else if (this.characterId === 'huntress') {
         // Huntress: hatchet on back — smaller
         ctx.fillStyle = '#6B4226';
         ctx.fillRect(cx - p, bodyY + p, p, 2 * p);
@@ -515,7 +586,20 @@ export class Killer extends Character {
     }
 
     // ── Head — back view ──
-    if (this.characterId === 'huntress') {
+    if (this.characterId === 'wraith') {
+      // Wraith: hooded skull from behind
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(headX - p, headY, headW + 2 * p, headH + p);
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(headX, headY + p, headW, headH - p);
+      // Center seam
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(cx - Math.floor(p / 2), headY + p, p, headH - p);
+      // Hood tattered edge
+      ctx.fillStyle = baseColor;
+      ctx.fillRect(headX + p, headY + 2 * p, p, headH - 3 * p);
+      ctx.fillRect(headX + headW - 2 * p, headY + 2 * p, p, headH - 3 * p);
+    } else if (this.characterId === 'huntress') {
       // Huntress: rabbit mask from behind
       const maskColor = '#886655';
       ctx.fillStyle = maskColor;
@@ -617,7 +701,12 @@ export class Killer extends Character {
     const buckleX = dir > 0 ? bodyX + bodyW - 2 * p : bodyX + p;
     ctx.fillRect(buckleX, bodyY + bodyH - p, p, p);
     // Shoulder pad (one visible)
-    if (this.characterId === 'huntress') {
+    if (this.characterId === 'wraith') {
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(bodyX + (dir > 0 ? bodyW : 0), bodyY, p, 2 * p);
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(bodyX + (dir > 0 ? bodyW : 0), bodyY + 2 * p, p, p);
+    } else if (this.characterId === 'huntress') {
       ctx.fillStyle = baseDark;
       ctx.fillRect(bodyX + (dir > 0 ? bodyW : 0), bodyY, p, p);
     } else {
@@ -646,7 +735,17 @@ export class Killer extends Character {
     if (!this.isStunned) {
       const wepX = dir > 0 ? armX + armW : armX - 2 * p;
       const wepSwing = armSwing;
-      if (this.characterId === 'huntress') {
+      if (this.characterId === 'wraith') {
+        // Wraith: wailing bell (side view)
+        ctx.fillStyle = '#6B4226';
+        ctx.fillRect(wepX, bodyY + wepSwing, p, 2 * p);
+        ctx.fillStyle = '#ccaa44';
+        ctx.fillRect(wepX - (dir > 0 ? 0 : p), bodyY + 2 * p + wepSwing, 2 * p, 2 * p);
+        ctx.fillStyle = '#eedd66';
+        ctx.fillRect(wepX - (dir > 0 ? 0 : p), bodyY + 2 * p + wepSwing, 2 * p, p);
+        ctx.fillStyle = '#aa8833';
+        ctx.fillRect(wepX, bodyY + 4 * p + wepSwing, p, p);
+      } else if (this.characterId === 'huntress') {
         // Huntress: hatchet — shorter handle, smaller blade
         ctx.fillStyle = '#6B4226';
         ctx.fillRect(wepX, bodyY + wepSwing, p, 2 * p);
@@ -674,7 +773,33 @@ export class Killer extends Character {
     }
 
     // ── Head — profile ──
-    if (this.characterId === 'huntress') {
+    if (this.characterId === 'wraith') {
+      // Wraith: skull profile
+      const hoodExtend = dir * p;
+      ctx.fillStyle = baseVDark;
+      ctx.fillRect(headX - p + Math.min(hoodExtend, 0), headY, headW + 2 * p + Math.abs(hoodExtend), headH + p);
+      ctx.fillStyle = baseDark;
+      ctx.fillRect(headX, headY + p, headW, headH - p);
+      // Skull face on facing side
+      const faceX = dir > 0 ? headX + headW - 3 * p : headX + p;
+      ctx.fillStyle = '#ccbbaa';
+      ctx.fillRect(faceX, headY + 2 * p, 2 * p, headH - 3 * p);
+      // Eye socket
+      ctx.fillStyle = '#1a1a1a';
+      const eyeHoleX = dir > 0 ? faceX + p : faceX;
+      ctx.fillRect(eyeHoleX, headY + 3 * p, p, p);
+      // Glowing cyan eye
+      if (!this.isStunned) {
+        const eyeRow = headY + 3 * p;
+        const flicker = 0.6 + Math.sin(Date.now() / 250) * 0.4;
+        ctx.fillStyle = `rgba(0, 255, 200, ${flicker * 0.2})`;
+        ctx.fillRect(faceX, eyeRow - p, 2 * p, 3 * p);
+        ctx.globalAlpha = flicker;
+        ctx.fillStyle = '#00ffcc';
+        ctx.fillRect(eyeHoleX, eyeRow, p, p);
+        ctx.globalAlpha = 1;
+      }
+    } else if (this.characterId === 'huntress') {
       // Huntress: rabbit mask profile
       const maskColor = '#886655';
       const faceColor = '#aa9988';

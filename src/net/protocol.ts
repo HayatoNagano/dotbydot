@@ -102,6 +102,8 @@ export interface NetState {
   ka: number[];
   // Lockers: [occupant (0=empty, 1=survivor1, 2=survivor2)][]
   l: number[];
+  // Wraith cloak: [cloakState(0-3), cloakProgress(0-1)]
+  cl: number[];
   // Server reconciliation: last processed client tick per role
   ackTick: number;
   ackTick2: number;

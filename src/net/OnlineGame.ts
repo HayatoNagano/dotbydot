@@ -21,6 +21,7 @@ import { ThrowAxe } from '../abilities/ThrowAxe';
 import { Trap } from '../entities/Trap';
 import { Axe } from '../entities/Axe';
 import { audioManager } from '../audio/AudioManager';
+import { TerrorRadius } from '../systems/TerrorRadius';
 import { TICK_DURATION } from '../constants';
 
 /** Buffered snapshot for entity interpolation */
@@ -207,6 +208,16 @@ export class OnlineGame {
       this.game.survivorCamera.follow({ x: mySurvivor.centerX, y: mySurvivor.centerY });
     }
 
+    // Heartbeat (terror radius) — survivors only
+    if (!isKiller) {
+      const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.game.survivor2;
+      const terrorIntensity = TerrorRadius.getIntensity(
+        this.game.killer.centerX, this.game.killer.centerY,
+        mySurvivor.centerX, mySurvivor.centerY,
+      );
+      audioManager.updateHeartbeat(terrorIntensity);
+    }
+
     // Skill check runs LOCALLY for responsive input (survivors only)
     if (!isKiller) {
       const mySC = this.myRole === 'survivor1' ? this.game.skillCheck1 : this.game.skillCheck2;
@@ -318,6 +329,7 @@ export class OnlineGame {
         g.generators[i].completed = gd[1] === 1;
         g.generators[i].beingRepaired = gd[2] === 1;
         g.generators[i].regressing = (gd[3] ?? 0) === 1;
+        g.generators[i].kickProgress = gd[4] ?? 0;
       }
     });
 
@@ -435,6 +447,14 @@ export class OnlineGame {
       g.killerAbility.cooldownRemaining = state.ka[0];
       if (state.ka[1] === 1 && !g.killerAbility.isActive) g.killerAbility.forceActivate();
       else if (state.ka[1] === 0 && g.killerAbility.isActive) g.killerAbility.deactivate();
+    }
+
+    // Wraith cloak state sync
+    if (state.cl && g.cloakAbility) {
+      g.cloakAbility.syncState(state.cl[0], state.cl[1]);
+    } else if (state.cl) {
+      k.cloakState = state.cl[0];
+      k.cloakProgress = state.cl[1];
     }
 
     // Killer timers

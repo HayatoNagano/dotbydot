@@ -927,9 +927,9 @@ export class Menu {
   /** Build MenuSelection from server's game_start data */
   private buildOnlineSelection(): MenuSelection {
     const gs = this.serverGameStart!;
-    const survivorDef = SURVIVOR_DEFS.find((d) => d.abilityName === gs.survivorDef) ?? SURVIVOR_DEFS[0];
-    const survivor2Def = SURVIVOR_DEFS.find((d) => d.abilityName === gs.survivor2Def) ?? SURVIVOR_DEFS[1] ?? SURVIVOR_DEFS[0];
-    const killerDef = KILLER_DEFS.find((d) => d.abilityName === gs.killerDef) ?? KILLER_DEFS[0];
+    const survivorDef = SURVIVOR_DEFS.find((d) => d.id === gs.survivorDef) ?? SURVIVOR_DEFS[0];
+    const survivor2Def = SURVIVOR_DEFS.find((d) => d.id === gs.survivor2Def) ?? SURVIVOR_DEFS[1] ?? SURVIVOR_DEFS[0];
+    const killerDef = KILLER_DEFS.find((d) => d.id === gs.killerDef) ?? KILLER_DEFS[0];
     this.state = MenuState.Playing;
     audioManager.playMenuSelect();
     return {

@@ -198,9 +198,9 @@ wss.on('connection', (ws) => {
         const s2Slot = room.players.find((p) => p.role === 'survivor2');
 
         const selection = ServerRoom.buildSelection(
-          s1Slot?.charDefId ?? 'sprint_burst',
-          s2Slot?.charDefId ?? 'dead_hard',
-          killerSlot?.charDefId ?? 'trap',
+          s1Slot?.charDefId ?? 'runner',
+          s2Slot?.charDefId ?? 'dodger',
+          killerSlot?.charDefId ?? 'trapper',
         );
 
         // Determine which roles are bots (no human player)
@@ -235,9 +235,9 @@ wss.on('connection', (ws) => {
           sendJSON(p.ws, {
             type: 'game_start',
             seed,
-            survivorDef: selection.survivorDef.abilityName,
-            survivor2Def: selection.survivor2Def.abilityName,
-            killerDef: selection.killerDef.abilityName,
+            survivorDef: selection.survivorDef.id,
+            survivor2Def: selection.survivor2Def.id,
+            killerDef: selection.killerDef.id,
             survivorColor: selection.survivorDef.color,
             survivor2Color: selection.survivor2Def.color,
             killerColor: selection.killerDef.color,

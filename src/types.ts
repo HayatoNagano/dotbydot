@@ -55,6 +55,7 @@ export const SURVIVOR_DEFS: CharacterDef[] = [
 export const KILLER_DEFS: CharacterDef[] = [
   { id: 'trapper', name: 'Trapper', nameJp: 'トラッパー', description: 'ベアトラップ: 罠を設置 (最大2個, CT 20秒)', color: '#ff2244', abilityName: 'trap' },
   { id: 'huntress', name: 'Huntress', nameJp: 'ハントレス', description: '斧投擲: 遠距離攻撃 (CT 10秒)', color: '#ff6644', abilityName: 'throw_axe' },
+  { id: 'wraith', name: 'Wraith', nameJp: 'レイス', description: '透明化: 姿を消して高速移動 (解除2秒/発動1秒)', color: '#6644cc', abilityName: 'cloak' },
 ];
 
 export interface MenuSelection {

@@ -138,9 +138,9 @@ export class ServerRoom {
     survivor2DefId: string,
     killerDefId: string,
   ): MenuSelection {
-    const sDef = SURVIVOR_DEFS.find((d) => d.abilityName === survivorDefId) ?? SURVIVOR_DEFS[0];
-    const s2Def = SURVIVOR_DEFS.find((d) => d.abilityName === survivor2DefId) ?? SURVIVOR_DEFS[1] ?? SURVIVOR_DEFS[0];
-    const kDef = KILLER_DEFS.find((d) => d.abilityName === killerDefId) ?? KILLER_DEFS[0];
+    const sDef = SURVIVOR_DEFS.find((d) => d.id === survivorDefId) ?? SURVIVOR_DEFS[0];
+    const s2Def = SURVIVOR_DEFS.find((d) => d.id === survivor2DefId) ?? SURVIVOR_DEFS[1] ?? SURVIVOR_DEFS[0];
+    const kDef = KILLER_DEFS.find((d) => d.id === killerDefId) ?? KILLER_DEFS[0];
 
     return {
       mode: GameMode.Online,

@@ -721,6 +721,77 @@ export class AudioManager {
     osc.stop(now + 0.25);
   }
 
+  /** Wraith uncloak — double bell "カーンカーン" */
+  playWraithBellUncloak(): void {
+    if (!this.ready) return;
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+
+    // Two bell strikes
+    [0, 0.4].forEach((offset) => {
+      const t = now + offset;
+      // Main bell tone
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, t);
+      osc.frequency.exponentialRampToValueAtTime(600, t + 0.6);
+      // Overtone
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(1600, t);
+      osc2.frequency.exponentialRampToValueAtTime(1200, t + 0.4);
+
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.3, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+      const gain2 = ctx.createGain();
+      gain2.gain.setValueAtTime(0.1, t);
+      gain2.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+
+      osc.connect(gain);
+      gain.connect(this.master);
+      osc.start(t);
+      osc.stop(t + 0.7);
+      osc2.connect(gain2);
+      gain2.connect(this.master);
+      osc2.start(t);
+      osc2.stop(t + 0.4);
+    });
+  }
+
+  /** Wraith cloak — single bell "カーン" */
+  playWraithBellCloak(): void {
+    if (!this.ready) return;
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(600, now);
+    osc.frequency.exponentialRampToValueAtTime(400, now + 0.8);
+
+    const osc2 = ctx.createOscillator();
+    osc2.type = 'sine';
+    osc2.frequency.setValueAtTime(1200, now);
+    osc2.frequency.exponentialRampToValueAtTime(800, now + 0.5);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+    const gain2 = ctx.createGain();
+    gain2.gain.setValueAtTime(0.08, now);
+    gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+    osc.connect(gain);
+    gain.connect(this.master);
+    osc.start(now);
+    osc.stop(now + 0.9);
+    osc2.connect(gain2);
+    gain2.connect(this.master);
+    osc2.start(now);
+    osc2.stop(now + 0.5);
+  }
+
   /** Menu select — click */
   playMenuSelect(): void {
     if (!this.ready) return;

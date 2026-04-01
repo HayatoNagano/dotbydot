@@ -24,6 +24,7 @@ import { AIController } from '../ai/AIController';
 import { DeadHard } from '../abilities/DeadHard';
 import { TrapAbility } from '../abilities/TrapAbility';
 import { ThrowAxe } from '../abilities/ThrowAxe';
+import { CloakAbility } from '../abilities/CloakAbility';
 import { eventBus } from './EventBus';
 import { HealthState, GamePhase, GameMode, PlayerRole, type MenuSelection } from '../types';
 import { NetInput } from '../net/protocol';
@@ -82,6 +83,7 @@ export class Game {
   killerAbility: Ability | null = null;
   private trapAbility: TrapAbility | null = null;
   private throwAxe: ThrowAxe | null = null;
+  cloakAbility: CloakAbility | null = null;
   private deadHard: DeadHard | null = null;
   private deadHard2: DeadHard | null = null;
 
@@ -275,6 +277,10 @@ export class Game {
       case 'throw_axe':
         this.throwAxe = new ThrowAxe(this.killer);
         this.killerAbility = this.throwAxe;
+        break;
+      case 'cloak':
+        this.cloakAbility = new CloakAbility(this.killer);
+        this.killerAbility = this.cloakAbility;
         break;
     }
   }
@@ -642,10 +648,11 @@ export class Game {
               break;
             }
           }
-          // Try pickup any dying survivor
+          // Try pickup any dying survivor (skip hooked survivors)
           for (const s of this.survivors) {
             const dh = s === this.survivor ? this.deadHard : this.deadHard2;
             if (dh && dh.invincible) continue;
+            if (this.hooks.some((h) => h.hooked === s)) continue;
             if (this.killer.tryPickup(s)) break;
           }
           // Search lockers
@@ -673,6 +680,13 @@ export class Game {
       if (this.killerAbility.activate()) {
         if (this.throwAxe && this.killerAbility === this.throwAxe) {
           this.emitSound('playAxeThrow');
+        } else if (this.cloakAbility && this.killerAbility === this.cloakAbility) {
+          // Wraith bell: uncloak (state 1) = double bell, cloak (state 3) = single bell
+          if (this.killer.cloakState === 1) {
+            this.emitSound('playWraithBellUncloak');
+          } else {
+            this.emitSound('playWraithBellCloak');
+          }
         } else {
           this.emitSound('playAbilityActivate');
         }

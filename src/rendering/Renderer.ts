@@ -212,7 +212,18 @@ export class Renderer {
       if (char instanceof Survivor) {
         char.render(ctx, sx, sy);
       } else if (char instanceof Killer) {
+        // Wraith cloaking visibility
+        if (char.characterId === 'wraith') {
+          if (char.cloakState === 0 && !isKillerView) continue; // fully cloaked — invisible to survivors
+          if (char.cloakState !== 2) {
+            // Transitioning or cloaked (killer view): apply transparency
+            ctx.globalAlpha = isKillerView
+              ? Math.max(0.25, char.cloakProgress) // killer always sees self faintly
+              : char.cloakProgress;
+          }
+        }
         char.render(ctx, sx, sy);
+        ctx.globalAlpha = 1;
       }
     }
 
