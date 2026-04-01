@@ -55,8 +55,8 @@ export class Survivor extends Character {
       case HealthState.Healthy:
         skinColor = '#ffd5a0'; skinShadow = '#d4a870';
         bodyColor = this.color;
-        bodyLight = this.characterId === 'dodger' ? '#88ffcc' : '#55ffaa';
-        bodyDark = '#009955';
+        bodyLight = this.characterId === 'dodger' ? '#88ffcc' : this.characterId === 'strong' ? '#ffbb66' : '#55ffaa';
+        bodyDark = this.characterId === 'strong' ? '#cc6600' : '#009955';
         legColor = '#2255aa'; legDark = '#183d7a'; shoeColor = '#333';
         hairColor = '#553322'; hairDark = '#3a2010';
         break;
@@ -319,6 +319,10 @@ export class Survivor extends Character {
       ctx.fillRect(headX + headW - p, headY + p, p, 2 * p);
       // Ponytail: extra hair pixel extending 1p to the right of the head
       ctx.fillRect(headX + headW, headY + p, p, p);
+    } else if (this.characterId === 'strong') {
+      // David: buzz cut — minimal side hair
+      ctx.fillRect(headX, headY + p, p, p);
+      ctx.fillRect(headX + headW - p, headY + p, p, p);
     } else {
       ctx.fillRect(headX, headY + p, p, p);
       ctx.fillRect(headX + headW - p, headY + p, p, p);
@@ -326,8 +330,14 @@ export class Survivor extends Character {
 
     // Eyebrows
     ctx.fillStyle = hairColor;
-    ctx.fillRect(headX + p, headY + p, 2 * p, Math.floor(p / 2));
-    ctx.fillRect(headX + headW - 3 * p, headY + p, 2 * p, Math.floor(p / 2));
+    if (this.characterId === 'strong') {
+      // David: thicker eyebrows
+      ctx.fillRect(headX + p, headY + p, 2 * p, p);
+      ctx.fillRect(headX + headW - 3 * p, headY + p, 2 * p, p);
+    } else {
+      ctx.fillRect(headX + p, headY + p, 2 * p, Math.floor(p / 2));
+      ctx.fillRect(headX + headW - 3 * p, headY + p, 2 * p, Math.floor(p / 2));
+    }
 
     // Eyes
     const eyeRow = headY + 2 * p;
@@ -354,6 +364,13 @@ export class Survivor extends Character {
       ctx.fillRect(cx - Math.floor(p / 2), headY + headH - 2 * p, p, Math.floor(p / 2));
     } else {
       ctx.fillRect(cx - p, headY + headH - 2 * p, 2 * p, Math.floor(p / 2));
+    }
+
+    // David: stubble/beard
+    if (this.characterId === 'strong') {
+      ctx.fillStyle = 'rgba(60,40,20,0.3)';
+      ctx.fillRect(headX + p, headY + 3 * p, headW - 2 * p, p);
+      ctx.fillRect(headX, headY + headH - p, headW, p);
     }
   }
 
@@ -661,6 +678,17 @@ export class Survivor extends Character {
       ctx.fillRect(headX + headW - p, headY + 3 * p, p, Math.floor(p / 2));
     } else {
       ctx.fillRect(headX, headY + 3 * p, p, Math.floor(p / 2));
+    }
+
+    // David: stubble on jaw in profile
+    if (this.characterId === 'strong') {
+      ctx.fillStyle = 'rgba(60,40,20,0.3)';
+      if (facingRight) {
+        ctx.fillRect(headX + headW - p, headY + 3 * p, p, p);
+      } else {
+        ctx.fillRect(headX, headY + 3 * p, p, p);
+      }
+      ctx.fillRect(headX + p, headY + headH - p, headW - 2 * p, p);
     }
   }
 }

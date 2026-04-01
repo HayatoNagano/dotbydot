@@ -50,6 +50,7 @@ export interface CharacterDef {
 export const SURVIVOR_DEFS: CharacterDef[] = [
   { id: 'runner', name: 'Dwight', nameJp: 'ドワット', description: 'スプリントバースト: 3秒間 速度2倍 (CT 40秒)', color: '#00ff88', abilityName: 'sprint_burst' },
   { id: 'dodger', name: 'Fenley', nameJp: 'フェンリー', description: 'デッドハード: 0.5秒 無敵ダッシュ (CT 60秒)', color: '#00ccff', abilityName: 'dead_hard' },
+  { id: 'strong', name: 'David Quinn', nameJp: 'デイビッド＝クイーン', description: 'ボディブロック: 体当たりで担がれた仲間を救助 (CT 60秒)', color: '#ff9933', abilityName: 'body_block' },
 ];
 
 export const KILLER_DEFS: CharacterDef[] = [

@@ -721,6 +721,49 @@ export class AudioManager {
     osc.stop(now + 0.25);
   }
 
+  /** Body block tackle — heavy impact thud */
+  playBodyBlock(): void {
+    if (!this.ready) return;
+    const ctx = this.ctx!;
+    const now = ctx.currentTime;
+
+    // Low impact thud
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(80, now);
+    osc.frequency.exponentialRampToValueAtTime(40, now + 0.2);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+
+    osc.connect(gain);
+    gain.connect(this.master);
+    osc.start(now);
+    osc.stop(now + 0.3);
+
+    // Noise burst for impact texture
+    const bufferSize = ctx.sampleRate * 0.1;
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.15, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 400;
+    noise.connect(filter);
+    filter.connect(noiseGain);
+    noiseGain.connect(this.master);
+    noise.start(now);
+    noise.stop(now + 0.15);
+  }
+
   /** Wraith uncloak — double bell "カーンカーン" */
   playWraithBellUncloak(): void {
     if (!this.ready) return;

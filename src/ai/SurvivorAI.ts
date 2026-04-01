@@ -94,6 +94,10 @@ export class SurvivorAI implements AIController {
         if (killerClose && distToKiller < TILE_SIZE * 3 && Math.random() < 0.03) {
           result.ability = true;
         }
+        // Body block: use ability when killer is carrying a teammate and close
+        if (this.killer.isCarrying && killerClose && distToKiller < TILE_SIZE * 5) {
+          result.ability = true;
+        }
         break;
 
       case SurvivorState.Hide:

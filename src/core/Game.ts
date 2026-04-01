@@ -25,6 +25,7 @@ import { DeadHard } from '../abilities/DeadHard';
 import { TrapAbility } from '../abilities/TrapAbility';
 import { ThrowAxe } from '../abilities/ThrowAxe';
 import { CloakAbility } from '../abilities/CloakAbility';
+import { BodyBlockAbility } from '../abilities/BodyBlockAbility';
 import { eventBus } from './EventBus';
 import { HealthState, GamePhase, GameMode, PlayerRole, type MenuSelection } from '../types';
 import { NetInput } from '../net/protocol';
@@ -86,6 +87,8 @@ export class Game {
   cloakAbility: CloakAbility | null = null;
   private deadHard: DeadHard | null = null;
   private deadHard2: DeadHard | null = null;
+  private bodyBlock: BodyBlockAbility | null = null;
+  private bodyBlock2: BodyBlockAbility | null = null;
 
   phase: GamePhase = GamePhase.Playing;
   generatorsCompleted = 0;
@@ -256,6 +259,10 @@ export class Game {
         this.deadHard = new DeadHard(this.survivor);
         this.survivorAbility = this.deadHard;
         break;
+      case 'body_block':
+        this.bodyBlock = new BodyBlockAbility(this.survivor);
+        this.survivorAbility = this.bodyBlock;
+        break;
     }
 
     // Survivor 2 ability
@@ -266,6 +273,10 @@ export class Game {
       case 'dead_hard':
         this.deadHard2 = new DeadHard(this.survivor2);
         this.survivor2Ability = this.deadHard2;
+        break;
+      case 'body_block':
+        this.bodyBlock2 = new BodyBlockAbility(this.survivor2);
+        this.survivor2Ability = this.bodyBlock2;
         break;
     }
 
@@ -399,6 +410,20 @@ export class Game {
   }
 
   /** Check if a rectangle collides with any dropped pallet */
+  /** Check body block tackle collision with carrying killer */
+  private checkBodyBlock(bb: BodyBlockAbility | null, s: Survivor): void {
+    if (!bb?.isActive || bb.tackleHit) return;
+    if (!this.killer.carrying) return;
+    const dx = s.centerX - this.killer.centerX;
+    const dy = s.centerY - this.killer.centerY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < TILE_SIZE * 1.5) {
+      bb.tackleHit = true;
+      this.killer.applyStun(this.map);
+      this.emitSound('playBodyBlock');
+    }
+  }
+
   /** Move a character by raw velocity with wall collision (for dashes) */
   private dashMove(c: Character, vx: number, vy: number, dt: number): void {
     c.prevX = c.pos.x;
@@ -628,9 +653,10 @@ export class Game {
         let hit = false;
         // Try attack each survivor
         for (const s of this.survivors) {
-          // Check dead hard invincibility
+          // Check dash invincibility (dead hard / body block)
           const dh = s === this.survivor ? this.deadHard : this.deadHard2;
-          if (dh && dh.invincible) continue;
+          const bb = s === this.survivor ? this.bodyBlock : this.bodyBlock2;
+          if ((dh && dh.invincible) || (bb && bb.invincible)) continue;
 
           if (this.killer.tryAttack(s)) {
             hit = true;
@@ -651,7 +677,8 @@ export class Game {
           // Try pickup any dying survivor (skip hooked survivors)
           for (const s of this.survivors) {
             const dh = s === this.survivor ? this.deadHard : this.deadHard2;
-            if (dh && dh.invincible) continue;
+            const bb = s === this.survivor ? this.bodyBlock : this.bodyBlock2;
+            if ((dh && dh.invincible) || (bb && bb.invincible)) continue;
             if (this.hooks.some((h) => h.hooked === s)) continue;
             if (this.killer.tryPickup(s)) break;
           }
@@ -701,6 +728,9 @@ export class Game {
       if (this.deadHard?.isActive) {
         const { dx, dy } = this.deadHard.getDashVelocity();
         this.dashMove(this.survivor, dx, dy, dt);
+      } else if (this.bodyBlock?.isActive) {
+        const { dx, dy } = this.bodyBlock.getDashVelocity();
+        this.dashMove(this.survivor, dx, dy, dt);
       } else {
         this.survivor.move(sdx, sdy, dt, this.map);
       }
@@ -712,6 +742,9 @@ export class Game {
     if (!this.survivor2.isIncapacitated && !s2Locker && !s2Hooked) {
       if (this.deadHard2?.isActive) {
         const { dx, dy } = this.deadHard2.getDashVelocity();
+        this.dashMove(this.survivor2, dx, dy, dt);
+      } else if (this.bodyBlock2?.isActive) {
+        const { dx, dy } = this.bodyBlock2.getDashVelocity();
         this.dashMove(this.survivor2, dx, dy, dt);
       } else {
         this.survivor2.move(s2dx, s2dy, dt, this.map);
@@ -738,6 +771,10 @@ export class Game {
     this.survivor2Ability?.update(dt);
     this.killerAbility?.update(dt);
 
+    // Body block — tackle carrying killer to force drop
+    this.checkBodyBlock(this.bodyBlock, this.survivor);
+    this.checkBodyBlock(this.bodyBlock2, this.survivor2);
+
     // Update traps — check both survivors
     if (this.trapAbility) {
       for (const trap of this.trapAbility.traps) {
@@ -761,7 +798,8 @@ export class Game {
           for (const s of this.survivors) {
             if (CollisionSystem.overlaps(axe, s)) {
               const dh = s === this.survivor ? this.deadHard : this.deadHard2;
-              if (!(dh && dh.invincible)) {
+              const bb = s === this.survivor ? this.bodyBlock : this.bodyBlock2;
+              if (!(dh && dh.invincible) && !(bb && bb.invincible)) {
                 s.takeDamage();
                 axe.alive = false;
                 this.emitSound('playHit');
