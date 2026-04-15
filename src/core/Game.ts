@@ -51,9 +51,11 @@ export class Game {
   readonly survivor: Survivor;
   /** Second survivor (always bot-controlled) */
   readonly survivor2: Survivor;
+  /** Third survivor (always bot-controlled) */
+  readonly survivor3: Survivor;
   /** All survivors for iteration */
   readonly survivors: Survivor[];
-  /** The survivor controlled by the local player (set by OnlineGame for guest2) */
+  /** The survivor controlled by the local player (set by OnlineGame for guest) */
   localSurvivor: Survivor;
   readonly killer: Killer;
   readonly pallets: Pallet[] = [];
@@ -73,6 +75,7 @@ export class Game {
   /** Per-survivor skill checks */
   readonly skillCheck1: SkillCheck;
   readonly skillCheck2: SkillCheck;
+  readonly skillCheck3: SkillCheck;
   readonly infoPanel: InfoPanel | null;
   readonly selection: MenuSelection;
   readonly headless: boolean;
@@ -81,14 +84,17 @@ export class Game {
 
   survivorAbility: Ability | null = null;
   survivor2Ability: Ability | null = null;
+  survivor3Ability: Ability | null = null;
   killerAbility: Ability | null = null;
   private trapAbility: TrapAbility | null = null;
   private throwAxe: ThrowAxe | null = null;
   cloakAbility: CloakAbility | null = null;
   private deadHard: DeadHard | null = null;
   private deadHard2: DeadHard | null = null;
+  private deadHard3: DeadHard | null = null;
   private bodyBlock: BodyBlockAbility | null = null;
   private bodyBlock2: BodyBlockAbility | null = null;
+  private bodyBlock3: BodyBlockAbility | null = null;
 
   phase: GamePhase = GamePhase.Playing;
   generatorsCompleted = 0;
@@ -97,6 +103,7 @@ export class Game {
 
   private skillCheckTimer1 = 0;
   private skillCheckTimer2 = 0;
+  private skillCheckTimer3 = 0;
   private repairTickTimer = 0;
   private prevSurvivorHealth: HealthState = HealthState.Healthy;
   private prevPhase: GamePhase = GamePhase.Playing;
@@ -110,10 +117,14 @@ export class Game {
   private survivorAI: SurvivorAI | null = null;
   /** AI for the 2nd survivor (always bot-controlled unless a 2nd guest joins) */
   private survivor2AI: SurvivorAI | null = null;
+  /** AI for the 3rd survivor (always bot-controlled unless a 3rd guest joins) */
+  private survivor3AI: SurvivorAI | null = null;
   /** If set, a human guest is controlling survivor1 instead of AI */
   guest1Input: NetInput | null = null;
   /** If set, a human guest is controlling survivor2 instead of AI */
   guest2Input: NetInput | null = null;
+  /** If set, a human guest is controlling survivor3 instead of AI */
+  guest3Input: NetInput | null = null;
   /** If set, a human client is controlling killer instead of AI/local */
   killerInput: NetInput | null = null;
   /** Timer for killer kicking a generator (1 second action) */
@@ -134,11 +145,13 @@ export class Game {
     this.scratchMarks = new ScratchMarks();
     this.skillCheck1 = new SkillCheck();
     this.skillCheck2 = new SkillCheck();
+    this.skillCheck3 = new SkillCheck();
     this.infoPanel = headless ? null : new InfoPanel();
 
-    // Spawn positions — survivors on opposite corners, killer in center-bottom
+    // Spawn positions — survivors spread across top, killer in bottom-right
     const s1Spawn = this.findWalkableSpawn(5, 5);
     const s2Spawn = this.findWalkableSpawn(this.map.cols - 6, 5);
+    const s3Spawn = this.findWalkableSpawn(Math.floor(this.map.cols / 2), 5);
     const kSpawn = this.findWalkableSpawn(this.map.cols - 6, this.map.rows - 6);
 
     this.survivor = new Survivor(s1Spawn.x * TILE_SIZE + 2, s1Spawn.y * TILE_SIZE + 2);
@@ -149,7 +162,11 @@ export class Game {
     this.survivor2.color = selection.survivor2Def.color;
     this.survivor2.characterId = selection.survivor2Def.id;
 
-    this.survivors = [this.survivor, this.survivor2];
+    this.survivor3 = new Survivor(s3Spawn.x * TILE_SIZE + 2, s3Spawn.y * TILE_SIZE + 2);
+    this.survivor3.color = selection.survivor3Def.color;
+    this.survivor3.characterId = selection.survivor3Def.id;
+
+    this.survivors = [this.survivor, this.survivor2, this.survivor3];
     this.localSurvivor = this.survivor;
 
     this.killer = new Killer(kSpawn.x * TILE_SIZE + 2, kSpawn.y * TILE_SIZE + 2);
@@ -170,7 +187,7 @@ export class Game {
     // Setup AI
     if (selection.mode === GameMode.VsCPU) {
       if (this.playerRole === PlayerRole.Survivor) {
-        // Player is survivor1, AI controls killer + survivor2
+        // Player is survivor1, AI controls killer + survivor2 + survivor3
         this.killerAI = new KillerAI(
           this.killer, this.survivors, this.map, this.killerFog,
           this.scratchMarks, this.hooks, this.generators,
@@ -180,8 +197,13 @@ export class Game {
           this.generators, this.exitGates, this.hooks, this.lockers,
           () => this.gatesPowered,
         );
+        this.survivor3AI = new SurvivorAI(
+          this.survivor3, this.killer, this.map, this.survivorFog,
+          this.generators, this.exitGates, this.hooks, this.lockers,
+          () => this.gatesPowered,
+        );
       } else {
-        // Player is killer, AI controls both survivors
+        // Player is killer, AI controls all survivors
         this.survivorAI = new SurvivorAI(
           this.survivor, this.killer, this.map, this.survivorFog,
           this.generators, this.exitGates, this.hooks, this.lockers,
@@ -189,6 +211,11 @@ export class Game {
         );
         this.survivor2AI = new SurvivorAI(
           this.survivor2, this.killer, this.map, this.survivorFog,
+          this.generators, this.exitGates, this.hooks, this.lockers,
+          () => this.gatesPowered,
+        );
+        this.survivor3AI = new SurvivorAI(
+          this.survivor3, this.killer, this.map, this.survivorFog,
           this.generators, this.exitGates, this.hooks, this.lockers,
           () => this.gatesPowered,
         );
@@ -209,6 +236,13 @@ export class Game {
           () => this.gatesPowered,
         );
       }
+      if (botRoles.includes('survivor3')) {
+        this.survivor3AI = new SurvivorAI(
+          this.survivor3, this.killer, this.map, this.survivorFog,
+          this.generators, this.exitGates, this.hooks, this.lockers,
+          () => this.gatesPowered,
+        );
+      }
       if (botRoles.includes('killer')) {
         this.killerAI = new KillerAI(
           this.killer, this.survivors, this.map, this.killerFog,
@@ -216,9 +250,14 @@ export class Game {
         );
       }
     } else if (selection.mode === GameMode.Online && !headless) {
-      // Online client: survivor2 AI as fallback (server controls all via guestInput/killerInput)
+      // Online client: survivor2/survivor3 AI as fallback (server controls all via guestInput/killerInput)
       this.survivor2AI = new SurvivorAI(
         this.survivor2, this.killer, this.map, this.survivorFog,
+        this.generators, this.exitGates, this.hooks, this.lockers,
+        () => this.gatesPowered,
+      );
+      this.survivor3AI = new SurvivorAI(
+        this.survivor3, this.killer, this.map, this.survivorFog,
         this.generators, this.exitGates, this.hooks, this.lockers,
         () => this.gatesPowered,
       );
@@ -280,6 +319,21 @@ export class Game {
         break;
     }
 
+    // Survivor 3 ability
+    switch (selection.survivor3Def.abilityName) {
+      case 'sprint_burst':
+        this.survivor3Ability = new SprintBurst(this.survivor3);
+        break;
+      case 'dead_hard':
+        this.deadHard3 = new DeadHard(this.survivor3);
+        this.survivor3Ability = this.deadHard3;
+        break;
+      case 'body_block':
+        this.bodyBlock3 = new BodyBlockAbility(this.survivor3);
+        this.survivor3Ability = this.bodyBlock3;
+        break;
+    }
+
     switch (selection.killerDef.abilityName) {
       case 'trap':
         this.trapAbility = new TrapAbility(this.killer);
@@ -323,7 +377,7 @@ export class Game {
       }
     }
 
-    for (let i = 0; i < 4 && roomIdx < rooms.length; i++) {
+    for (let i = 0; i < 6 && roomIdx < rooms.length; i++) {
       const room = rooms[roomIdx++];
       const hx = room.x + 2 + Math.floor(rng() * 4);
       const hy = room.y + 2 + Math.floor(rng() * 4);
@@ -528,6 +582,26 @@ export class Game {
       this.survivor2.walking = aiResult.walk;
     }
 
+    // --- Survivor 3 input (AI or guest3) ---
+    let s3dx = 0, s3dy = 0;
+    let survivor3Interact = false;
+    let survivor3AbilityInput = false;
+
+    if (this.guest3Input) {
+      s3dx = this.guest3Input.dx;
+      s3dy = this.guest3Input.dy;
+      survivor3Interact = this.guest3Input.interactHeld;
+      survivor3AbilityInput = this.guest3Input.ability;
+      this.survivor3.walking = this.guest3Input.walk;
+    } else if (this.survivor3AI) {
+      const aiResult = this.survivor3AI.update(dt);
+      s3dx = aiResult.dx;
+      s3dy = aiResult.dy;
+      survivor3Interact = aiResult.interact;
+      survivor3AbilityInput = aiResult.ability;
+      this.survivor3.walking = aiResult.walk;
+    }
+
     // --- Killer input (Arrow keys or WASD when playing as killer / AI) ---
     let kdx = 0, kdy = 0;
     let killerInteract = false;
@@ -578,7 +652,7 @@ export class Game {
     const s1IsAI = playingAsKiller || !!this.guest1Input;
     this.updateSurvivorInteractions(
       this.survivor, sdx, sdy, survivorInteract, survivorAbilityInput,
-      this.survivorAbility, this.deadHard, s1IsAI, false, dt,
+      this.survivorAbility, this.deadHard, s1IsAI, 0, dt,
       this.guest1Input,
     );
 
@@ -586,8 +660,16 @@ export class Game {
     const s2IsAI = true; // always AI or remote guest
     this.updateSurvivorInteractions(
       this.survivor2, s2dx, s2dy, survivor2Interact, survivor2AbilityInput,
-      this.survivor2Ability, this.deadHard2, s2IsAI, true, dt,
+      this.survivor2Ability, this.deadHard2, s2IsAI, 1, dt,
       this.guest2Input,
+    );
+
+    // === Survivor 3 interactions ===
+    const s3IsAI = true; // always AI or remote guest
+    this.updateSurvivorInteractions(
+      this.survivor3, s3dx, s3dy, survivor3Interact, survivor3AbilityInput,
+      this.survivor3Ability, this.deadHard3, s3IsAI, 2, dt,
+      this.guest3Input,
     );
 
     // Killer generator kick
@@ -654,8 +736,8 @@ export class Game {
         // Try attack each survivor
         for (const s of this.survivors) {
           // Check dash invincibility (dead hard / body block)
-          const dh = s === this.survivor ? this.deadHard : this.deadHard2;
-          const bb = s === this.survivor ? this.bodyBlock : this.bodyBlock2;
+          const dh = s === this.survivor ? this.deadHard : s === this.survivor2 ? this.deadHard2 : this.deadHard3;
+          const bb = s === this.survivor ? this.bodyBlock : s === this.survivor2 ? this.bodyBlock2 : this.bodyBlock3;
           if ((dh && dh.invincible) || (bb && bb.invincible)) continue;
 
           if (this.killer.tryAttack(s)) {
@@ -676,8 +758,8 @@ export class Game {
           }
           // Try pickup any dying survivor (skip hooked survivors)
           for (const s of this.survivors) {
-            const dh = s === this.survivor ? this.deadHard : this.deadHard2;
-            const bb = s === this.survivor ? this.bodyBlock : this.bodyBlock2;
+            const dh = s === this.survivor ? this.deadHard : s === this.survivor2 ? this.deadHard2 : this.deadHard3;
+            const bb = s === this.survivor ? this.bodyBlock : s === this.survivor2 ? this.bodyBlock2 : this.bodyBlock3;
             if ((dh && dh.invincible) || (bb && bb.invincible)) continue;
             if (this.hooks.some((h) => h.hooked === s)) continue;
             if (this.killer.tryPickup(s)) break;
@@ -751,6 +833,21 @@ export class Game {
       }
     }
 
+    // Survivor 3
+    const s3Locker = this.lockers.find((l) => l.occupant === this.survivor3);
+    const s3Hooked = this.hooks.some((h) => h.hooked === this.survivor3);
+    if (!this.survivor3.isIncapacitated && !s3Locker && !s3Hooked) {
+      if (this.deadHard3?.isActive) {
+        const { dx, dy } = this.deadHard3.getDashVelocity();
+        this.dashMove(this.survivor3, dx, dy, dt);
+      } else if (this.bodyBlock3?.isActive) {
+        const { dx, dy } = this.bodyBlock3.getDashVelocity();
+        this.dashMove(this.survivor3, dx, dy, dt);
+      } else {
+        this.survivor3.move(s3dx, s3dy, dt, this.map);
+      }
+    }
+
     // Killer movement
     if (!this.killer.isStunned && !this.kickingGen) {
       const palletBlocker = (px: number, py: number, w: number, h: number) =>
@@ -769,11 +866,13 @@ export class Game {
     // Update abilities
     this.survivorAbility?.update(dt);
     this.survivor2Ability?.update(dt);
+    this.survivor3Ability?.update(dt);
     this.killerAbility?.update(dt);
 
     // Body block — tackle carrying killer to force drop
     this.checkBodyBlock(this.bodyBlock, this.survivor);
     this.checkBodyBlock(this.bodyBlock2, this.survivor2);
+    this.checkBodyBlock(this.bodyBlock3, this.survivor3);
 
     // Update traps — check both survivors
     if (this.trapAbility) {
@@ -797,8 +896,8 @@ export class Game {
         if (axe.alive) {
           for (const s of this.survivors) {
             if (CollisionSystem.overlaps(axe, s)) {
-              const dh = s === this.survivor ? this.deadHard : this.deadHard2;
-              const bb = s === this.survivor ? this.bodyBlock : this.bodyBlock2;
+              const dh = s === this.survivor ? this.deadHard : s === this.survivor2 ? this.deadHard2 : this.deadHard3;
+              const bb = s === this.survivor ? this.bodyBlock : s === this.survivor2 ? this.bodyBlock2 : this.bodyBlock3;
               if (!(dh && dh.invincible) && !(bb && bb.invincible)) {
                 s.takeDamage();
                 axe.alive = false;
@@ -816,6 +915,7 @@ export class Game {
     this.killer.updateTimers(dt);
     this.skillCheck1.update(dt);
     this.skillCheck2.update(dt);
+    this.skillCheck3.update(dt);
 
     for (const gen of this.generators) {
       if (gen.completionRevealTimer > 0) gen.completionRevealTimer -= dt;
@@ -823,10 +923,12 @@ export class Game {
 
     for (const hook of this.hooks) hook.update(dt);
 
-    // Scratch marks — track both survivors
+    // Scratch marks — track all survivors
+    const allDx = [sdx, s2dx, s3dx];
+    const allDy = [sdy, s2dy, s3dy];
     const runners: ScratchMarkRunner[] = this.survivors.map((s, i) => {
-      const dx = i === 0 ? sdx : s2dx;
-      const dy = i === 0 ? sdy : s2dy;
+      const dx = allDx[i];
+      const dy = allDy[i];
       return {
         x: s.centerX,
         y: s.centerY,
@@ -947,7 +1049,7 @@ export class Game {
     ability: Ability | null,
     deadHard: DeadHard | null,
     isAI: boolean,
-    isSecondSurvivor: boolean,
+    survivorIndex: number,
     dt: number,
     guestInput: NetInput | null = null,
   ): void {
@@ -955,8 +1057,8 @@ export class Game {
     const survivorLocker = this.lockers.find((l) => l.occupant === s);
     const isHooked = this.hooks.some((h) => h.hooked === s);
     /** This survivor is controlled by a local human player (not AI, not remote guest) */
-    const isLocalPlayer = !isAI && !playingAsKiller && !isSecondSurvivor && !guestInput;
-    const sc = isSecondSurvivor ? this.skillCheck2 : this.skillCheck1;
+    const isLocalPlayer = !isAI && !playingAsKiller && survivorIndex === 0 && !guestInput;
+    const sc = survivorIndex === 2 ? this.skillCheck3 : survivorIndex === 1 ? this.skillCheck2 : this.skillCheck1;
 
     // Survivor ability
     const abilityInput = guestInput ? guestInput.ability
@@ -1025,15 +1127,18 @@ export class Game {
               repairedGen = true;
               // Skill check: trigger for human-controlled survivors (local player or guest)
               if (!isAI || guestInput !== null) {
-                const timer = isSecondSurvivor ? this.skillCheckTimer2 : this.skillCheckTimer1;
+                const timers = [this.skillCheckTimer1, this.skillCheckTimer2, this.skillCheckTimer3];
+                const timer = timers[survivorIndex];
                 const newTimer = timer + dt;
                 if (newTimer > 3 + Math.random() * 4) {
-                  if (isSecondSurvivor) this.skillCheckTimer2 = 0;
-                  else this.skillCheckTimer1 = 0;
+                  if (survivorIndex === 0) this.skillCheckTimer1 = 0;
+                  else if (survivorIndex === 1) this.skillCheckTimer2 = 0;
+                  else this.skillCheckTimer3 = 0;
                   sc.trigger();
                 } else {
-                  if (isSecondSurvivor) this.skillCheckTimer2 = newTimer;
-                  else this.skillCheckTimer1 = newTimer;
+                  if (survivorIndex === 0) this.skillCheckTimer1 = newTimer;
+                  else if (survivorIndex === 1) this.skillCheckTimer2 = newTimer;
+                  else this.skillCheckTimer3 = newTimer;
                 }
               }
               break;
@@ -1041,8 +1146,9 @@ export class Game {
           }
 
           if (!repairedGen) {
-            if (isSecondSurvivor) this.skillCheckTimer2 = 0;
-            else this.skillCheckTimer1 = 0;
+            if (survivorIndex === 0) this.skillCheckTimer1 = 0;
+            else if (survivorIndex === 1) this.skillCheckTimer2 = 0;
+            else this.skillCheckTimer3 = 0;
             for (const gate of this.exitGates) {
               if (gate.powered && !gate.isOpen && CollisionSystem.distance(s, gate) < TILE_SIZE * 2.5) {
                 gate.tryOpen(dt);
@@ -1085,6 +1191,11 @@ export class Game {
     this.survivor2AI = null;
   }
 
+  /** Disable survivor3 AI (when a human guest controls survivor3) */
+  disableSurvivor3AI(): void {
+    this.survivor3AI = null;
+  }
+
   render(alpha: number): void {
     if (!this.renderer) return;
     this.renderer.clear();
@@ -1109,7 +1220,7 @@ export class Game {
     this.renderer.renderView(view, this.map, characters, objects, this.scratchMarks, this.killer, this.survivors, alpha);
     this.renderAbilityProjectiles(view);
     if (!isKillerPlayer) {
-      const localSC = this.localSurvivor === this.survivor2 ? this.skillCheck2 : this.skillCheck1;
+      const localSC = this.localSurvivor === this.survivor3 ? this.skillCheck3 : this.localSurvivor === this.survivor2 ? this.skillCheck2 : this.skillCheck1;
       this.renderer.renderSkillCheck(view, localSC, this.killer);
     }
 
@@ -1117,16 +1228,18 @@ export class Game {
     if (this.infoPanel) {
       const hookedHook = this.hooks.find((h) => h.hooked === this.survivor) ?? null;
       const hookedHook2 = this.hooks.find((h) => h.hooked === this.survivor2) ?? null;
+      const hookedHook3 = this.hooks.find((h) => h.hooked === this.survivor3) ?? null;
       const s1InLocker = this.lockers.some((l) => l.occupant === this.survivor);
       const s2InLocker = this.lockers.some((l) => l.occupant === this.survivor2);
+      const s3InLocker = this.lockers.some((l) => l.occupant === this.survivor3);
       this.infoPanel.render(
         this.renderer.ctx,
         this.survivors, this.killer,
         this.generatorsCompleted, this.gatesPowered, this.isRepairing,
-        [this.survivorAbility, this.survivor2Ability], this.killerAbility,
-        [hookedHook, hookedHook2],
+        [this.survivorAbility, this.survivor2Ability, this.survivor3Ability], this.killerAbility,
+        [hookedHook, hookedHook2, hookedHook3],
         this.playerRole,
-        [s1InLocker, s2InLocker],
+        [s1InLocker, s2InLocker, s3InLocker],
       );
     }
 

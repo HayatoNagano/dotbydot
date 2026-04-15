@@ -5,7 +5,7 @@
  * All clients (killer + survivors) send inputs, receive state.
  */
 
-export type OnlineRole = 'killer' | 'survivor1' | 'survivor2';
+export type OnlineRole = 'killer' | 'survivor1' | 'survivor2' | 'survivor3';
 
 // ─── Client → Server messages ───
 
@@ -53,9 +53,11 @@ export interface NetGameStart {
   seed: number;
   survivorDef: string; // ability id
   survivor2Def: string;
+  survivor3Def: string;
   killerDef: string;
   survivorColor: string;
   survivor2Color: string;
+  survivor3Color: string;
   killerColor: string;
 }
 
@@ -72,11 +74,14 @@ export interface NetState {
   // Character IDs (e.g. 'runner'/'dodger', 'trapper'/'huntress')
   sId: string;
   s2Id: string;
+  s3Id: string;
   kId: string;
   // Survivor1 [x, y, prevX, prevY, health(0-3), dir(0-3), moving, walking, animTime]
   s: number[];
   // Survivor2 [x, y, prevX, prevY, health(0-3), dir(0-3), moving, walking, animTime]
   s2: number[];
+  // Survivor3 [x, y, prevX, prevY, health(0-3), dir(0-3), moving, walking, animTime]
+  s3: number[];
   // Killer [x, y, prevX, prevY, dir(0-3), moving, walking, stunTime, atkCooldown, carrying, animTime]
   k: number[];
   // Generators: [progress, completed(0/1), repairing(0/1), regressing(0/1)][]
@@ -96,17 +101,20 @@ export interface NetState {
   // Skill check per survivor
   sc: { active: boolean; angle: number; ts: number; te: number; gs: number; ge: number; result?: string } | null;
   sc2: { active: boolean; angle: number; ts: number; te: number; gs: number; ge: number; result?: string } | null;
+  sc3: { active: boolean; angle: number; ts: number; te: number; gs: number; ge: number; result?: string } | null;
   // Ability cooldowns [cooldownRemaining, isActive(0/1)]
   sa: number[];
   s2a: number[];
+  s3a: number[];
   ka: number[];
-  // Lockers: [occupant (0=empty, 1=survivor1, 2=survivor2)][]
+  // Lockers: [occupant (0=empty, 1=survivor1, 2=survivor2, 3=survivor3)][]
   l: number[];
   // Wraith cloak: [cloakState(0-3), cloakProgress(0-1)]
   cl: number[];
   // Server reconciliation: last processed client tick per role
   ackTick: number;
   ackTick2: number;
+  ackTick3: number;
   ackTickK: number;
 }
 
@@ -127,9 +135,11 @@ export interface NetDeltaState {
   terrorIntensity?: number;
   sId?: string;
   s2Id?: string;
+  s3Id?: string;
   kId?: string;
   s?: number[];
   s2?: number[];
+  s3?: number[];
   k?: number[];
   g?: number[][];
   h?: number[][];
@@ -142,11 +152,14 @@ export interface NetDeltaState {
   sm?: number[][];
   sc?: NetState['sc'];
   sc2?: NetState['sc2'];
+  sc3?: NetState['sc3'];
   sa?: number[];
   s2a?: number[];
+  s3a?: number[];
   ka?: number[];
   ackTick: number;
   ackTick2: number;
+  ackTick3: number;
   ackTickK: number;
 }
 
@@ -172,6 +185,9 @@ export const DELTA_MASK = {
   CL:      1 << 17,
   CHASE:   1 << 18,
   IDS:     1 << 19,
+  S3:      1 << 20,
+  SC3:     1 << 21,
+  S3A:     1 << 22,
 } as const;
 
 /** Server → Client: Sound effect trigger */

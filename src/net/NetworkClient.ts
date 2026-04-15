@@ -13,7 +13,7 @@ export type ServerMessage =
   | { type: 'player_count'; playerCount: number }
   | { type: 'opponent_left' }
   | { type: 'relay'; data: NetMessage; guestIndex?: number }
-  | { type: 'game_start'; seed: number; survivorDef: string; survivor2Def: string; killerDef: string; survivorColor: string; survivor2Color: string; killerColor: string }
+  | { type: 'game_start'; seed: number; survivorDef: string; survivor2Def: string; survivor3Def: string; killerDef: string; survivorColor: string; survivor2Color: string; survivor3Color: string; killerColor: string }
   | { type: 'char_select'; role: OnlineRole; defId: string }
   | { type: 'state'; [key: string]: unknown }
   | { type: 'delta'; [key: string]: unknown }

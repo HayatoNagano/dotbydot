@@ -46,17 +46,18 @@ function serializeSkillCheck(sc: SkillCheck): NetState['sc'] {
  *
  * @param game The game instance
  * @param tick Server tick counter
- * @param ackTicks [survivor1AckTick, survivor2AckTick, killerAckTick]
+ * @param ackTicks [survivor1AckTick, survivor2AckTick, survivor3AckTick, killerAckTick]
  * @param sendScratchMarks Whether to include scratch marks this tick
  */
 export function serializeGameState(
   game: Game,
   tick: number,
-  ackTicks: [number, number, number],
+  ackTicks: [number, number, number, number],
   sendScratchMarks: boolean,
 ): NetState {
   const s = game.survivor;
   const s2 = game.survivor2;
+  const s3 = game.survivor3;
   const k = game.killer;
 
   const state: NetState = {
@@ -69,6 +70,7 @@ export function serializeGameState(
     terrorIntensity: 0,
     sId: s.characterId,
     s2Id: s2.characterId,
+    s3Id: s3.characterId,
     kId: k.characterId,
     s: [
       r2(s.pos.x), r2(s.pos.y), r(s.prevX), r(s.prevY),
@@ -80,19 +82,24 @@ export function serializeGameState(
       healthToNum(s2.health), dirToNum(s2.direction),
       s2.isMoving ? 1 : 0, s2.walking ? 1 : 0, r(s2.animTime),
     ],
+    s3: [
+      r2(s3.pos.x), r2(s3.pos.y), r(s3.prevX), r(s3.prevY),
+      healthToNum(s3.health), dirToNum(s3.direction),
+      s3.isMoving ? 1 : 0, s3.walking ? 1 : 0, r(s3.animTime),
+    ],
     k: [
       r2(k.pos.x), r2(k.pos.y), r(k.prevX), r(k.prevY),
       dirToNum(k.direction), k.isMoving ? 1 : 0, k.walking ? 1 : 0,
-      r(k.stunTimer), r(k.attackCooldown), k.carrying === s ? 1 : k.carrying === s2 ? 2 : 0, r(k.animTime),
+      r(k.stunTimer), r(k.attackCooldown), k.carrying === s ? 1 : k.carrying === s2 ? 2 : k.carrying === s3 ? 3 : 0, r(k.animTime),
     ],
     g: game.generators.map((gen) => [r(gen.progress), gen.completed ? 1 : 0, gen.beingRepaired ? 1 : 0, gen.regressing ? 1 : 0, r(gen.kickProgress)]),
-    h: game.hooks.map((h) => [h.hooked === s ? 1 : h.hooked === s2 ? 2 : 0, h.stage, r(h.stageTimer), h.canSelfUnhook ? 1 : 0, r(h.rescueProgress), r(h.selfUnhookProgress)]),
+    h: game.hooks.map((h) => [h.hooked === s ? 1 : h.hooked === s2 ? 2 : h.hooked === s3 ? 3 : 0, h.stage, r(h.stageTimer), h.canSelfUnhook ? 1 : 0, r(h.rescueProgress), r(h.selfUnhookProgress)]),
     p: game.pallets.map((p) => [p.dropped ? 1 : 0, p.isDestroyed ? 1 : 0, r(p.pos.x), r(p.pos.y), p.width, p.height]),
     gt: game.exitGates.map((gt) => [gt.powered ? 1 : 0, gt.isOpen ? 1 : 0, r(gt.openProgress)]),
-    l: game.lockers.map((loc) => loc.occupant === s ? 1 : loc.occupant === s2 ? 2 : 0),
+    l: game.lockers.map((loc) => loc.occupant === s ? 1 : loc.occupant === s2 ? 2 : loc.occupant === s3 ? 3 : 0),
     cl: [k.cloakState, r(k.cloakProgress)],
     tr: (game.killerAbility instanceof TrapAbility ? (game.killerAbility as TrapAbility).traps : [])
-      .map((t) => [r(t.pos.x), r(t.pos.y), t.armed ? 1 : 0, t.trapped === s ? 1 : t.trapped === s2 ? 2 : 0]),
+      .map((t) => [r(t.pos.x), r(t.pos.y), t.armed ? 1 : 0, t.trapped === s ? 1 : t.trapped === s2 ? 2 : t.trapped === s3 ? 3 : 0]),
     ax: (game.killerAbility instanceof ThrowAxe ? (game.killerAbility as ThrowAxe).axes : [])
       .filter((a) => a.alive)
       .map((a) => [r(a.pos.x), r(a.pos.y), a.alive ? 1 : 0]),
@@ -101,12 +108,15 @@ export function serializeGameState(
       : [],
     sc: serializeSkillCheck(game.skillCheck1),
     sc2: serializeSkillCheck(game.skillCheck2),
+    sc3: serializeSkillCheck(game.skillCheck3),
     sa: [r(game.survivorAbility?.cooldownRemaining ?? 0), game.survivorAbility?.isActive ? 1 : 0],
     s2a: [r(game.survivor2Ability?.cooldownRemaining ?? 0), game.survivor2Ability?.isActive ? 1 : 0],
+    s3a: [r(game.survivor3Ability?.cooldownRemaining ?? 0), game.survivor3Ability?.isActive ? 1 : 0],
     ka: [r(game.killerAbility?.cooldownRemaining ?? 0), game.killerAbility?.isActive ? 1 : 0],
     ackTick: ackTicks[0],
     ackTick2: ackTicks[1],
-    ackTickK: ackTicks[2],
+    ackTick3: ackTicks[2],
+    ackTickK: ackTicks[3],
   };
 
   return state;
@@ -145,6 +155,7 @@ export function computeDeltaState(
     mask: 0,
     ackTick: current.ackTick,
     ackTick2: current.ackTick2,
+    ackTick3: current.ackTick3,
     ackTickK: current.ackTickK,
   };
 
@@ -165,10 +176,11 @@ export function computeDeltaState(
   }
 
   // Character IDs (rarely change)
-  if (current.sId !== previous.sId || current.s2Id !== previous.s2Id || current.kId !== previous.kId) {
+  if (current.sId !== previous.sId || current.s2Id !== previous.s2Id || current.s3Id !== previous.s3Id || current.kId !== previous.kId) {
     mask |= DELTA_MASK.IDS;
     delta.sId = current.sId;
     delta.s2Id = current.s2Id;
+    delta.s3Id = current.s3Id;
     delta.kId = current.kId;
   }
 
@@ -180,6 +192,10 @@ export function computeDeltaState(
   if (!arraysEqual(current.s2, previous.s2)) {
     mask |= DELTA_MASK.S2;
     delta.s2 = current.s2;
+  }
+  if (!arraysEqual(current.s3, previous.s3)) {
+    mask |= DELTA_MASK.S3;
+    delta.s3 = current.s3;
   }
   if (!arraysEqual(current.k, previous.k)) {
     mask |= DELTA_MASK.K;
@@ -235,6 +251,10 @@ export function computeDeltaState(
     mask |= DELTA_MASK.SC2;
     delta.sc2 = current.sc2;
   }
+  if (JSON.stringify(current.sc3) !== JSON.stringify(previous.sc3)) {
+    mask |= DELTA_MASK.SC3;
+    delta.sc3 = current.sc3;
+  }
 
   // Abilities
   if (!arraysEqual(current.sa, previous.sa)) {
@@ -244,6 +264,10 @@ export function computeDeltaState(
   if (!arraysEqual(current.s2a, previous.s2a)) {
     mask |= DELTA_MASK.S2A;
     delta.s2a = current.s2a;
+  }
+  if (!arraysEqual(current.s3a, previous.s3a)) {
+    mask |= DELTA_MASK.S3A;
+    delta.s3a = current.s3a;
   }
   if (!arraysEqual(current.ka, previous.ka)) {
     mask |= DELTA_MASK.KA;

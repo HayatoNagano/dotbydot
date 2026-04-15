@@ -65,5 +65,7 @@ export interface MenuSelection {
   survivorDef: CharacterDef;
   /** Second survivor (bot-controlled) */
   survivor2Def: CharacterDef;
+  /** Third survivor (bot-controlled) */
+  survivor3Def: CharacterDef;
   killerDef: CharacterDef;
 }

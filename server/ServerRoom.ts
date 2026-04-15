@@ -61,6 +61,7 @@ export class ServerRoom {
     killer: { ...EMPTY_INPUT },
     survivor1: { ...EMPTY_INPUT },
     survivor2: { ...EMPTY_INPUT },
+    survivor3: { ...EMPTY_INPUT },
   };
 
   /** Last received tick counter per role (for ack) */
@@ -68,6 +69,7 @@ export class ServerRoom {
     killer: 0,
     survivor1: 0,
     survivor2: 0,
+    survivor3: 0,
   };
 
   private callbacks: ServerRoomCallbacks;
@@ -108,7 +110,7 @@ export class ServerRoom {
 
   /** Apply a skill check result from a client */
   applySkillCheckResult(role: OnlineRole, result: 'great' | 'good' | 'miss'): void {
-    const sc = role === 'survivor2' ? this.game.skillCheck2 : this.game.skillCheck1;
+    const sc = role === 'survivor3' ? this.game.skillCheck3 : role === 'survivor2' ? this.game.skillCheck2 : this.game.skillCheck1;
     if (sc.active) {
       sc.applyResult(result);
       // Sound will be emitted by Game through soundCallback
@@ -125,6 +127,10 @@ export class ServerRoom {
       this.game.guest2Input = this.inputs.survivor2;
       this.inputs.survivor2 = { ...this.inputs.survivor2, interact: false, ability: false, space: false };
     }
+    if (!this.botRoles.has('survivor3')) {
+      this.game.guest3Input = this.inputs.survivor3;
+      this.inputs.survivor3 = { ...this.inputs.survivor3, interact: false, ability: false, space: false };
+    }
     if (!this.botRoles.has('killer')) {
       this.game.killerInput = this.inputs.killer;
       this.inputs.killer = { ...this.inputs.killer, interact: false, ability: false, space: false };
@@ -140,7 +146,7 @@ export class ServerRoom {
       const state = serializeGameState(
         this.game,
         this.tick,
-        [this.lastClientTick.survivor1, this.lastClientTick.survivor2, this.lastClientTick.killer],
+        [this.lastClientTick.survivor1, this.lastClientTick.survivor2, this.lastClientTick.survivor3, this.lastClientTick.killer],
         sendScratchMarks,
       );
 
@@ -178,12 +184,12 @@ export class ServerRoom {
             gensCompleted: state.gensCompleted,
             gatesPowered: state.gatesPowered,
             inChase: state.inChase,
-            sId: state.sId, s2Id: state.s2Id, kId: state.kId,
-            s: state.s, s2: state.s2, k: state.k,
+            sId: state.sId, s2Id: state.s2Id, s3Id: state.s3Id, kId: state.kId,
+            s: state.s, s2: state.s2, s3: state.s3, k: state.k,
             sm: state.sm,
-            sc: state.sc, sc2: state.sc2,
-            sa: state.sa, s2a: state.s2a, ka: state.ka,
-            ackTick: state.ackTick, ackTick2: state.ackTick2, ackTickK: state.ackTickK,
+            sc: state.sc, sc2: state.sc2, sc3: state.sc3,
+            sa: state.sa, s2a: state.s2a, s3a: state.s3a, ka: state.ka,
+            ackTick: state.ackTick, ackTick2: state.ackTick2, ackTick3: state.ackTick3, ackTickK: state.ackTickK,
           };
         } else {
           // World tick: update everything
@@ -203,10 +209,12 @@ export class ServerRoom {
   static buildSelection(
     survivorDefId: string,
     survivor2DefId: string,
+    survivor3DefId: string,
     killerDefId: string,
   ): MenuSelection {
     const sDef = SURVIVOR_DEFS.find((d) => d.id === survivorDefId) ?? SURVIVOR_DEFS[0];
     const s2Def = SURVIVOR_DEFS.find((d) => d.id === survivor2DefId) ?? SURVIVOR_DEFS[1] ?? SURVIVOR_DEFS[0];
+    const s3Def = SURVIVOR_DEFS.find((d) => d.id === survivor3DefId) ?? SURVIVOR_DEFS[2] ?? SURVIVOR_DEFS[0];
     const kDef = KILLER_DEFS.find((d) => d.id === killerDefId) ?? KILLER_DEFS[0];
 
     return {
@@ -214,6 +222,7 @@ export class ServerRoom {
       playerRole: PlayerRole.Survivor, // Not meaningful on server, but required
       survivorDef: sDef,
       survivor2Def: s2Def,
+      survivor3Def: s3Def,
       killerDef: kDef,
     };
   }

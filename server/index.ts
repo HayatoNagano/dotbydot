@@ -10,7 +10,7 @@ import { ServerRoom } from './ServerRoom';
 import { OnlineRole, NetInput, NetSkillCheckResult } from '../src/net/protocol';
 
 const PORT = Number(process.env.PORT) || 3001;
-const MAX_PLAYERS = 3; // 1 killer + 2 survivors
+const MAX_PLAYERS = 4; // 1 killer + 3 survivors
 const PING_INTERVAL = 25_000;
 
 interface PlayerSlot {
@@ -123,6 +123,7 @@ wss.on('connection', (ws) => {
         let role: OnlineRole;
         if (!takenRoles.has('survivor1')) role = 'survivor1';
         else if (!takenRoles.has('survivor2')) role = 'survivor2';
+        else if (!takenRoles.has('survivor3')) role = 'survivor3';
         else if (!takenRoles.has('killer')) role = 'killer';
         else {
           sendJSON(ws, { type: 'error', message: '部屋が満員です' });
@@ -179,7 +180,7 @@ wss.on('connection', (ws) => {
         const room = info.room;
         // Need at least 2 players (1 killer + 1 survivor)
         const hasKiller = room.players.some((p) => p.role === 'killer');
-        const hasSurvivor = room.players.some((p) => p.role === 'survivor1' || p.role === 'survivor2');
+        const hasSurvivor = room.players.some((p) => p.role === 'survivor1' || p.role === 'survivor2' || p.role === 'survivor3');
         if (!hasKiller || !hasSurvivor) {
           sendJSON(ws, { type: 'error', message: 'キラーとサバイバーが必要です' });
           break;
@@ -196,10 +197,12 @@ wss.on('connection', (ws) => {
         const killerSlot = room.players.find((p) => p.role === 'killer');
         const s1Slot = room.players.find((p) => p.role === 'survivor1');
         const s2Slot = room.players.find((p) => p.role === 'survivor2');
+        const s3Slot = room.players.find((p) => p.role === 'survivor3');
 
         const selection = ServerRoom.buildSelection(
           s1Slot?.charDefId ?? 'runner',
           s2Slot?.charDefId ?? 'dodger',
+          s3Slot?.charDefId ?? 'strong',
           killerSlot?.charDefId ?? 'trapper',
         );
 
@@ -207,6 +210,7 @@ wss.on('connection', (ws) => {
         const botRoles: OnlineRole[] = [];
         if (!s1Slot) botRoles.push('survivor1');
         if (!s2Slot) botRoles.push('survivor2');
+        if (!s3Slot) botRoles.push('survivor3');
         if (!killerSlot) botRoles.push('killer');
 
         // Create ServerRoom with headless game
@@ -237,9 +241,11 @@ wss.on('connection', (ws) => {
             seed,
             survivorDef: selection.survivorDef.id,
             survivor2Def: selection.survivor2Def.id,
+            survivor3Def: selection.survivor3Def.id,
             killerDef: selection.killerDef.id,
             survivorColor: selection.survivorDef.color,
             survivor2Color: selection.survivor2Def.color,
+            survivor3Color: selection.survivor3Def.color,
             killerColor: selection.killerDef.color,
           });
         }
@@ -350,7 +356,7 @@ function cleanup(ws: WebSocket): void {
     // If game was running and too few players, stop the game
     if (room.serverRoom) {
       const hasKiller = room.players.some((p) => p.role === 'killer');
-      const hasSurvivor = room.players.some((p) => p.role === 'survivor1' || p.role === 'survivor2');
+      const hasSurvivor = room.players.some((p) => p.role === 'survivor1' || p.role === 'survivor2' || p.role === 'survivor3');
       if (!hasKiller || !hasSurvivor) {
         // Notify disconnect
         for (const p of room.players) {

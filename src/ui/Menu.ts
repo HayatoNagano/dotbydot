@@ -28,9 +28,10 @@ export enum MenuState {
   OnlineCharWait = 'online_char_wait',
 }
 
-/** Pick the other survivor def (for the bot-controlled 2nd survivor) */
-function otherSurvivorDef(primary: CharacterDef): CharacterDef {
-  return SURVIVOR_DEFS.find((d) => d.id !== primary.id) || SURVIVOR_DEFS[0];
+/** Pick the other survivor defs (for bot-controlled 2nd and 3rd survivors) */
+function otherSurvivorDefs(primary: CharacterDef): [CharacterDef, CharacterDef] {
+  const others = SURVIVOR_DEFS.filter((d) => d.id !== primary.id);
+  return [others[0] ?? SURVIVOR_DEFS[0], others[1] ?? SURVIVOR_DEFS[0]];
 }
 
 export class Menu {
@@ -74,7 +75,7 @@ export class Menu {
   /** Tracks which roles have joined the room (set by main.ts) */
   joinedRoles: Set<string> = new Set();
   /** Set by main.ts when server sends game_start */
-  serverGameStart: { seed: number; survivorDef: string; survivor2Def: string; killerDef: string; survivorColor: string; survivor2Color: string; killerColor: string } | null = null;
+  serverGameStart: { seed: number; survivorDef: string; survivor2Def: string; survivor3Def: string; killerDef: string; survivorColor: string; survivor2Color: string; survivor3Color: string; killerColor: string } | null = null;
 
   constructor() {
     this.previewSurvivor = new Survivor(0, 0);
@@ -264,11 +265,13 @@ export class Menu {
             this.selectedKiller = Math.floor(Math.random() * KILLER_DEFS.length);
             this.state = MenuState.Playing;
             audioManager.playMenuSelect();
+            const [s2Def, s3Def] = otherSurvivorDefs(SURVIVOR_DEFS[this.selectedSurvivor]);
             return {
               mode: this.mode,
               playerRole: this.playerRole,
               survivorDef: SURVIVOR_DEFS[this.selectedSurvivor],
-              survivor2Def: otherSurvivorDef(SURVIVOR_DEFS[this.selectedSurvivor]),
+              survivor2Def: s2Def,
+              survivor3Def: s3Def,
               killerDef: KILLER_DEFS[this.selectedKiller],
             };
           }
@@ -322,11 +325,13 @@ export class Menu {
           }
           this.state = MenuState.Playing;
           audioManager.playMenuSelect();
+          const [s2DefK, s3DefK] = otherSurvivorDefs(SURVIVOR_DEFS[this.selectedSurvivor]);
           return {
             mode: this.mode,
             playerRole: this.playerRole,
             survivorDef: SURVIVOR_DEFS[this.selectedSurvivor],
-            survivor2Def: otherSurvivorDef(SURVIVOR_DEFS[this.selectedSurvivor]),
+            survivor2Def: s2DefK,
+            survivor3Def: s3DefK,
             killerDef: KILLER_DEFS[this.selectedKiller],
           };
         }
@@ -742,18 +747,18 @@ export class Menu {
 
       // Player count display
       const pc = this.playerCount;
-      const full = pc >= 3;
+      const full = pc >= 4;
       ctx.fillStyle = full ? '#00ff88' : '#ffcc44';
       ctx.font = 'bold 28px monospace';
-      ctx.fillText(`参加者: ${pc} / 3`, CX, 320);
+      ctx.fillText(`参加者: ${pc} / 4`, CX, 320);
 
       // Player slots with character selection status
       const slotY = 360;
-      const roles = ['killer', 'survivor1', 'survivor2'] as const;
-      const labels = ['キラー', 'サバイバー1', 'サバイバー2'];
-      const colors = ['#ff2244', '#00ff88', '#00ccff'];
+      const roles = ['killer', 'survivor1', 'survivor2', 'survivor3'] as const;
+      const labels = ['キラー', 'サバイバー1', 'サバイバー2', 'サバイバー3'];
+      const colors = ['#ff2244', '#00ff88', '#00ccff', '#ff9933'];
       let allReady = true;
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < 4; i++) {
         const joined = this.joinedRoles.has(roles[i]);
         const charSelected = this.charSelectedRoles.has(roles[i]);
         const y = slotY + i * 36;
@@ -824,7 +829,7 @@ export class Menu {
 
     ctx.fillStyle = '#666';
     ctx.font = '13px monospace';
-    ctx.fillText(`参加者: ${this.playerCount} / 3`, CX, 390);
+    ctx.fillText(`参加者: ${this.playerCount} / 4`, CX, 390);
 
     ctx.textAlign = 'left';
   }
@@ -929,6 +934,7 @@ export class Menu {
     const gs = this.serverGameStart!;
     const survivorDef = SURVIVOR_DEFS.find((d) => d.id === gs.survivorDef) ?? SURVIVOR_DEFS[0];
     const survivor2Def = SURVIVOR_DEFS.find((d) => d.id === gs.survivor2Def) ?? SURVIVOR_DEFS[1] ?? SURVIVOR_DEFS[0];
+    const survivor3Def = SURVIVOR_DEFS.find((d) => d.id === gs.survivor3Def) ?? SURVIVOR_DEFS[2] ?? SURVIVOR_DEFS[0];
     const killerDef = KILLER_DEFS.find((d) => d.id === gs.killerDef) ?? KILLER_DEFS[0];
     this.state = MenuState.Playing;
     audioManager.playMenuSelect();
@@ -937,6 +943,7 @@ export class Menu {
       playerRole: this.playerRole,
       survivorDef,
       survivor2Def,
+      survivor3Def,
       killerDef,
     };
   }

@@ -98,12 +98,15 @@ export class OnlineGame {
       this.game.localSurvivor = this.game.survivor;
     } else if (myRole === 'survivor2') {
       this.game.localSurvivor = this.game.survivor2;
+    } else if (myRole === 'survivor3') {
+      this.game.localSurvivor = this.game.survivor3;
     }
 
     // Initialize interpolation buffers for each character type
     this.interpBuffers.set('killer', []);
     this.interpBuffers.set('survivor1', []);
     this.interpBuffers.set('survivor2', []);
+    this.interpBuffers.set('survivor3', []);
 
     // Listen for server messages
     this.onMessage = this.onMessage.bind(this);
@@ -142,6 +145,7 @@ export class OnlineGame {
     s.tick = delta.tick;
     s.ackTick = delta.ackTick;
     s.ackTick2 = delta.ackTick2;
+    s.ackTick3 = delta.ackTick3;
     s.ackTickK = delta.ackTickK;
 
     if (m & DELTA_MASK.PHASE) {
@@ -153,10 +157,12 @@ export class OnlineGame {
     if (m & DELTA_MASK.IDS) {
       s.sId = delta.sId!;
       s.s2Id = delta.s2Id!;
+      s.s3Id = delta.s3Id!;
       s.kId = delta.kId!;
     }
     if (m & DELTA_MASK.S) s.s = delta.s!;
     if (m & DELTA_MASK.S2) s.s2 = delta.s2!;
+    if (m & DELTA_MASK.S3) s.s3 = delta.s3!;
     if (m & DELTA_MASK.K) s.k = delta.k!;
     if (m & DELTA_MASK.G) s.g = delta.g!;
     if (m & DELTA_MASK.H) s.h = delta.h!;
@@ -170,8 +176,10 @@ export class OnlineGame {
     else s.sm = []; // scratch marks not included = empty
     if (m & DELTA_MASK.SC) s.sc = delta.sc!;
     if (m & DELTA_MASK.SC2) s.sc2 = delta.sc2!;
+    if (m & DELTA_MASK.SC3) s.sc3 = delta.sc3!;
     if (m & DELTA_MASK.SA) s.sa = delta.sa!;
     if (m & DELTA_MASK.S2A) s.s2a = delta.s2a!;
+    if (m & DELTA_MASK.S3A) s.s3a = delta.s3a!;
     if (m & DELTA_MASK.KA) s.ka = delta.ka!;
 
     this.lastFullState = s;
@@ -223,7 +231,7 @@ export class OnlineGame {
       }
     } else {
       // Survivor prediction
-      const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.game.survivor2;
+      const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.myRole === 'survivor2' ? this.game.survivor2 : this.game.survivor3;
       const inLocker = this.game.lockers.some((l) => l.occupant === mySurvivor);
       const isHooked = this.game.hooks.some((h) => h.hooked === mySurvivor);
       const canMove = !mySurvivor.isIncapacitated && mySurvivor.health !== HealthState.Dead
@@ -265,9 +273,11 @@ export class OnlineGame {
     // Update fog and camera
     const s = this.game.survivor;
     const s2 = this.game.survivor2;
+    const s3 = this.game.survivor3;
     this.game.survivorFog.updateMultiple([
       { x: s.centerX, y: s.centerY },
       { x: s2.centerX, y: s2.centerY },
+      { x: s3.centerX, y: s3.centerY },
     ]);
     this.game.killerFog.update(this.game.killer.centerX, this.game.killer.centerY);
 
@@ -275,13 +285,13 @@ export class OnlineGame {
     if (isKiller) {
       this.game.killerCamera.follow({ x: this.game.killer.centerX, y: this.game.killer.centerY });
     } else {
-      const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.game.survivor2;
+      const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.myRole === 'survivor2' ? this.game.survivor2 : this.game.survivor3;
       this.game.survivorCamera.follow({ x: mySurvivor.centerX, y: mySurvivor.centerY });
     }
 
     // Heartbeat (terror radius) — survivors only
     if (!isKiller) {
-      const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.game.survivor2;
+      const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.myRole === 'survivor2' ? this.game.survivor2 : this.game.survivor3;
       const terrorIntensity = TerrorRadius.getIntensity(
         this.game.killer.centerX, this.game.killer.centerY,
         mySurvivor.centerX, mySurvivor.centerY,
@@ -291,7 +301,7 @@ export class OnlineGame {
 
     // Skill check runs LOCALLY for responsive input (survivors only)
     if (!isKiller) {
-      const mySC = this.myRole === 'survivor1' ? this.game.skillCheck1 : this.game.skillCheck2;
+      const mySC = this.myRole === 'survivor1' ? this.game.skillCheck1 : this.myRole === 'survivor2' ? this.game.skillCheck2 : this.game.skillCheck3;
       mySC.update(dt);
     }
   }
@@ -313,7 +323,7 @@ export class OnlineGame {
     let spaceForServer = spacePressed;
 
     if (!isKiller) {
-      const mySC = this.myRole === 'survivor1' ? this.game.skillCheck1 : this.game.skillCheck2;
+      const mySC = this.myRole === 'survivor1' ? this.game.skillCheck1 : this.myRole === 'survivor2' ? this.game.skillCheck2 : this.game.skillCheck3;
       if (spacePressed && mySC.active) {
         const result = mySC.hit();
         switch (result) {
@@ -371,21 +381,26 @@ export class OnlineGame {
     }
 
     // Character IDs
+    const s3 = g.survivor3;
     if (state.sId) s.characterId = state.sId;
     if (state.s2Id) s2.characterId = state.s2Id;
+    if (state.s3Id) s3.characterId = state.s3Id;
     if (state.kId) k.characterId = state.kId;
 
-    // Killer carrying state — k[9]: 0=none, 1=survivor1, 2=survivor2
+    // Killer carrying state — k[9]: 0=none, 1=survivor1, 2=survivor2, 3=survivor3
     // Must be set BEFORE reconciliation so isBeingCarried is up-to-date
     if (state.k[9] === 1) {
       k.carrying = s;
     } else if (state.k[9] === 2) {
       k.carrying = s2;
+    } else if (state.k[9] === 3) {
+      k.carrying = s3;
     } else {
       k.carrying = null;
     }
     s.isBeingCarried = k.carrying === s;
     s2.isBeingCarried = k.carrying === s2;
+    s3.isBeingCarried = k.carrying === s3;
 
     // ─── My character: server reconciliation with input replay ───
     this.reconcileMyCharacter(state);
@@ -404,13 +419,15 @@ export class OnlineGame {
       }
     });
 
-    // Hooks — hd[0]: 0=empty, 1=survivor1, 2=survivor2
+    // Hooks — hd[0]: 0=empty, 1=survivor1, 2=survivor2, 3=survivor3
     state.h.forEach((hd, i) => {
       if (i < g.hooks.length) {
         if (hd[0] === 1) {
           g.hooks[i].hooked = s;
         } else if (hd[0] === 2) {
           g.hooks[i].hooked = s2;
+        } else if (hd[0] === 3) {
+          g.hooks[i].hooked = s3;
         } else {
           g.hooks[i].hooked = null;
         }
@@ -452,7 +469,7 @@ export class OnlineGame {
     // Lockers
     state.l.forEach((occ, i) => {
       if (i < g.lockers.length) {
-        g.lockers[i].occupant = occ === 1 ? s : occ === 2 ? s2 : null;
+        g.lockers[i].occupant = occ === 1 ? s : occ === 2 ? s2 : occ === 3 ? s3 : null;
       }
     });
 
@@ -469,7 +486,7 @@ export class OnlineGame {
         trapAbility.traps[i].pos.x = td[0];
         trapAbility.traps[i].pos.y = td[1];
         trapAbility.traps[i].armed = td[2] === 1;
-        trapAbility.traps[i].trapped = td[3] === 1 ? s : td[3] === 2 ? s2 : null;
+        trapAbility.traps[i].trapped = td[3] === 1 ? s : td[3] === 2 ? s2 : td[3] === 3 ? s3 : null;
       });
     }
 
@@ -491,8 +508,8 @@ export class OnlineGame {
 
     // Skill check — client runs cursor locally for responsive input
     if (this.myRole !== 'killer') {
-      const mySCData = this.myRole === 'survivor1' ? state.sc : state.sc2;
-      const mySC = this.myRole === 'survivor1' ? g.skillCheck1 : g.skillCheck2;
+      const mySCData = this.myRole === 'survivor1' ? state.sc : this.myRole === 'survivor2' ? state.sc2 : state.sc3;
+      const mySC = this.myRole === 'survivor1' ? g.skillCheck1 : this.myRole === 'survivor2' ? g.skillCheck2 : g.skillCheck3;
       if (mySCData && mySCData.active && !mySC.active && !mySC.isShowingResult) {
         mySC.active = true;
         mySC.cursor = 0;
@@ -513,6 +530,11 @@ export class OnlineGame {
       g.survivor2Ability.cooldownRemaining = state.s2a[0];
       if (state.s2a[1] === 1 && !g.survivor2Ability.isActive) g.survivor2Ability.forceActivate();
       else if (state.s2a[1] === 0 && g.survivor2Ability.isActive) g.survivor2Ability.deactivate();
+    }
+    if (g.survivor3Ability) {
+      g.survivor3Ability.cooldownRemaining = state.s3a[0];
+      if (state.s3a[1] === 1 && !g.survivor3Ability.isActive) g.survivor3Ability.forceActivate();
+      else if (state.s3a[1] === 0 && g.survivor3Ability.isActive) g.survivor3Ability.deactivate();
     }
     if (g.killerAbility) {
       g.killerAbility.cooldownRemaining = state.ka[0];
@@ -560,20 +582,20 @@ export class OnlineGame {
       this.doReconciliation(k, serverX, serverY, ackTick, true);
     } else {
       // Survivor reconciliation
-      const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.game.survivor2;
-      const myData = this.myRole === 'survivor1' ? state.s : state.s2;
+      const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.myRole === 'survivor2' ? this.game.survivor2 : this.game.survivor3;
+      const myData = this.myRole === 'survivor1' ? state.s : this.myRole === 'survivor2' ? state.s2 : state.s3;
       const serverX = myData[0];
       const serverY = myData[1];
-      const ackTick = this.myRole === 'survivor1' ? state.ackTick : state.ackTick2;
+      const ackTick = this.myRole === 'survivor1' ? state.ackTick : this.myRole === 'survivor2' ? state.ackTick2 : state.ackTick3;
       mySurvivor.health = numToHealth(myData[4]) as HealthState;
 
       // Check if survivor cannot move: incapacitated, hooked, carried, or in locker
-      const myLockerVal = this.myRole === 'survivor1' ? 1 : 2;
+      const myLockerVal = this.myRole === 'survivor1' ? 1 : this.myRole === 'survivor2' ? 2 : 3;
       const isInLocker = state.l.some((v) => v === myLockerVal);
-      const myCarryVal = this.myRole === 'survivor1' ? 1 : 2;
+      const myCarryVal = this.myRole === 'survivor1' ? 1 : this.myRole === 'survivor2' ? 2 : 3;
       const isCarried = state.k[9] === myCarryVal;
-      // Check if any hook holds my survivor (hd[0]: 1=s1, 2=s2)
-      const myHookVal = this.myRole === 'survivor1' ? 1 : 2;
+      // Check if any hook holds my survivor (hd[0]: 1=s1, 2=s2, 3=s3)
+      const myHookVal = this.myRole === 'survivor1' ? 1 : this.myRole === 'survivor2' ? 2 : 3;
       const isHooked = state.h.some((hd) => hd[0] === myHookVal);
 
       if (mySurvivor.isIncapacitated || isHooked || isCarried || isInLocker) {
@@ -667,6 +689,16 @@ export class OnlineGame {
       this.game.survivor2.health = numToHealth(sd[4]) as HealthState;
     }
 
+    // Survivor 3
+    if (this.myRole !== 'survivor3') {
+      const sd = state.s3;
+      this.interpBuffers.get('survivor3')!.push({
+        time: now, x: sd[0], y: sd[1], prevX: sd[2], prevY: sd[3],
+        direction: sd[5], isMoving: sd[6] === 1, walking: sd[7] === 1, animTime: sd[8],
+      });
+      this.game.survivor3.health = numToHealth(sd[4]) as HealthState;
+    }
+
     // Killer
     if (this.myRole !== 'killer') {
       const kd = state.k;
@@ -754,6 +786,7 @@ export class OnlineGame {
   private getMyCharacter(): { pos: { x: number; y: number }; prevX: number; prevY: number } {
     if (this.myRole === 'killer') return this.game.killer;
     if (this.myRole === 'survivor2') return this.game.survivor2;
+    if (this.myRole === 'survivor3') return this.game.survivor3;
     return this.game.survivor;
   }
 
@@ -761,6 +794,7 @@ export class OnlineGame {
     if (role === 'killer') return this.game.killer;
     if (role === 'survivor1') return this.game.survivor;
     if (role === 'survivor2') return this.game.survivor2;
+    if (role === 'survivor3') return this.game.survivor3;
     return null;
   }
 
@@ -782,7 +816,7 @@ export class OnlineGame {
       if (this.myRole === 'killer') {
         this.game.killerCamera.follow({ x: this.game.killer.centerX, y: this.game.killer.centerY });
       } else {
-        const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.game.survivor2;
+        const mySurvivor = this.myRole === 'survivor1' ? this.game.survivor : this.myRole === 'survivor2' ? this.game.survivor2 : this.game.survivor3;
         this.game.survivorCamera.follow({ x: mySurvivor.centerX, y: mySurvivor.centerY });
       }
 

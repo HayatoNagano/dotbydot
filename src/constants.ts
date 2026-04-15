@@ -20,8 +20,8 @@ export const KILLER_BASE_SPEED = 276;
 export const KILLER_WALK_SPEED = 126;
 
 // Gameplay
-export const GENERATORS_ON_MAP = 5;
-export const GENERATORS_TO_POWER = 3;
+export const GENERATORS_ON_MAP = 7;
+export const GENERATORS_TO_POWER = 5;
 export const GENERATOR_REPAIR_TIME = 45; // seconds
 export const HOOK_STAGE_DURATION = 30; // seconds per stage
 export const HOOK_RESCUE_TIME = 1.5; // seconds to rescue from hook
